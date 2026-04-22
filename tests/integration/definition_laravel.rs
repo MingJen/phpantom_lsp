@@ -2095,3 +2095,115 @@ class Brand extends Model {
         line
     );
 }
+
+#[tokio::test]
+async fn test_goto_definition_laravel_config_usage_to_config_file_key() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $name = config('app.name');
+        $same = \\Config::get('app.name');
+    }
+}
+";
+    let config_app_php = "\
+<?php
+return [
+    'name' => env('APP_NAME', 'Laravel'),
+    'timezone' => 'UTC',
+];
+";
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("config/app.php", config_app_php),
+    ]);
+
+    // Cursor on "app.name" in config('app.name').
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        24,
+    )
+    .await;
+
+    assert!(
+        result.is_some(),
+        "Go-to-definition on config('app.name') should resolve to config/app.php key"
+    );
+
+    let response = result.unwrap();
+    let target_uri = definition_uri(&response);
+    assert!(
+        target_uri.as_str().ends_with("/config/app.php"),
+        "Should jump to config/app.php, got: {}",
+        target_uri
+    );
+    let line = definition_line(&response);
+    assert_eq!(
+        line, 2,
+        "'name' key in config/app.php is on line 2 (0-indexed), got: {}",
+        line
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_laravel_config_nested_key() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $from = config('app.mail.from.address');
+    }
+}
+";
+    let config_app_php = "\
+<?php
+return [
+    'mail' => [
+        'from' => [
+            'address' => 'noreply@example.com',
+        ],
+    ],
+];
+";
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("config/app.php", config_app_php),
+    ]);
+
+    // Cursor on "app.mail.from.address".
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        24,
+    )
+    .await;
+
+    assert!(
+        result.is_some(),
+        "Go-to-definition on nested config key should resolve to config/app.php nested key"
+    );
+
+    let response = result.unwrap();
+    let target_uri = definition_uri(&response);
+    assert!(
+        target_uri.as_str().ends_with("/config/app.php"),
+        "Should jump to config/app.php, got: {}",
+        target_uri
+    );
+    let line = definition_line(&response);
+    assert_eq!(
+        line, 4,
+        "'address' key should be on line 4 (0-indexed), got: {}",
+        line
+    );
+}

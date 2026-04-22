@@ -2102,3 +2102,25 @@ mod tests {
         assert!(is_subtype_of(&cls, "RuntimeException", &loader));
     }
 }
+
+/// Push a location only if it is not already present (deduplication).
+pub fn push_unique_location(
+    locations: &mut Vec<tower_lsp::lsp_types::Location>,
+    uri: &tower_lsp::lsp_types::Url,
+    start: tower_lsp::lsp_types::Position,
+    end: tower_lsp::lsp_types::Position,
+) {
+    use tower_lsp::lsp_types::{Location, Range};
+
+    let already_present = locations.iter().any(|l| {
+        l.uri == *uri
+            && l.range.start.line == start.line
+            && l.range.start.character == start.character
+    });
+    if !already_present {
+        locations.push(Location {
+            uri: uri.clone(),
+            range: Range { start, end },
+        });
+    }
+}

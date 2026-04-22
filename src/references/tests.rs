@@ -1391,3 +1391,173 @@ async fn test_this_method_references_excludes_unrelated() {
         lines
     );
 }
+
+#[tokio::test]
+async fn test_laravel_config_key_references_from_config_declaration() {
+    let backend = Backend::new_test();
+    let uri_config = Url::parse("file:///project/config/app.php").unwrap();
+    let uri_use = Url::parse("file:///project/src/Service.php").unwrap();
+
+    let config_php = concat!(
+        "<?php\n",                                           // L0
+        "return [\n",                                        // L1
+        "    'name' => env('APP_NAME'),\n",                  // L2
+        "    'mail' => [\n",                                 // L3
+        "        'from' => [\n",                             // L4
+        "            'address' => 'noreply@example.com',\n", // L5
+        "        ],\n",                                      // L6
+        "    ],\n",                                          // L7
+        "];\n",                                              // L8
+    );
+    let use_php = concat!(
+        "<?php\n",                                 // L0
+        "$a = config('app.name');\n",              // L1
+        "$b = \\Config::get('app.name');\n",       // L2
+        "$c = config('app.mail.from.address');\n", // L3
+    );
+
+    open_file(&backend, &uri_config, config_php).await;
+    open_file(&backend, &uri_use, use_php).await;
+
+    // Cursor on `name` in config/app.php.
+    let locs = find_references(&backend, &uri_config, 2, 6, true).await;
+
+    let in_use_lines: Vec<u32> = locs
+        .iter()
+        .filter(|l| l.uri == uri_use)
+        .map(|l| l.range.start.line)
+        .collect();
+    assert!(
+        in_use_lines.contains(&1),
+        "Should include config('app.name') usage on L1, got lines: {:?}",
+        in_use_lines
+    );
+    assert!(
+        in_use_lines.contains(&2),
+        "Should include Config::get('app.name') usage on L2, got lines: {:?}",
+        in_use_lines
+    );
+    assert!(
+        !in_use_lines.contains(&3),
+        "Should not include nested key app.mail.from.address on L3, got lines: {:?}",
+        in_use_lines
+    );
+
+    let has_decl = locs
+        .iter()
+        .any(|l| l.uri == uri_config && l.range.start.line == 2);
+    assert!(
+        has_decl,
+        "Should include declaration site in config/app.php"
+    );
+}
+
+#[tokio::test]
+async fn test_laravel_config_key_references_nested_usage_without_declaration() {
+    let backend = Backend::new_test();
+    let uri_config = Url::parse("file:///project/config/app.php").unwrap();
+    let uri_use = Url::parse("file:///project/src/Service.php").unwrap();
+
+    let config_php = concat!(
+        "<?php\n",                                           // L0
+        "return [\n",                                        // L1
+        "    'mail' => [\n",                                 // L2
+        "        'from' => [\n",                             // L3
+        "            'address' => 'noreply@example.com',\n", // L4
+        "        ],\n",                                      // L5
+        "    ],\n",                                          // L6
+        "];\n",                                              // L7
+    );
+    let use_php = concat!(
+        "<?php\n",                                 // L0
+        "$a = config('app.mail.from.address');\n", // L1
+        "$b = config('app.mail.from.address');\n", // L2
+    );
+
+    open_file(&backend, &uri_config, config_php).await;
+    open_file(&backend, &uri_use, use_php).await;
+
+    // Cursor on `app.mail.from.address` usage.
+    let locs = find_references(&backend, &uri_use, 1, 18, false).await;
+
+    let use_hits = locs.iter().filter(|l| l.uri == uri_use).count();
+    assert_eq!(
+        use_hits, 2,
+        "Should include both usage sites when include_declaration=false, got {}",
+        use_hits
+    );
+    let has_decl = locs.iter().any(|l| l.uri == uri_config);
+    assert!(
+        !has_decl,
+        "Should not include declaration when include_declaration=false"
+    );
+}
+
+#[tokio::test]
+async fn test_laravel_config_references_ignore_comment_usages() {
+    let backend = Backend::new_test();
+    let uri_config = Url::parse("file:///project/config/app.php").unwrap();
+    let uri_use = Url::parse("file:///project/src/Service.php").unwrap();
+
+    let config_php = concat!(
+        "<?php\n",                    // L0
+        "return [\n",                 // L1
+        "    'name' => 'demo',\n",    // L2
+        "    'timezone' => 'UTC',\n", // L3
+        "];\n",                       // L4
+    );
+    let use_php = concat!(
+        "<?php\n",                        // L0
+        "// config('app.name');\n",       // L1
+        "/* config('app.name') */\n",     // L2
+        "$x = config('app.name');\n",     // L3
+        "$y = config('app.timezone');\n", // L4
+    );
+
+    open_file(&backend, &uri_config, config_php).await;
+    open_file(&backend, &uri_use, use_php).await;
+
+    let locs = find_references(&backend, &uri_config, 2, 6, true).await;
+    let in_use_lines: Vec<u32> = locs
+        .iter()
+        .filter(|l| l.uri == uri_use)
+        .map(|l| l.range.start.line)
+        .collect();
+
+    assert_eq!(
+        in_use_lines,
+        vec![3],
+        "Only the real call should match app.name; got lines: {:?}",
+        in_use_lines
+    );
+}
+
+#[tokio::test]
+async fn test_laravel_config_references_ignore_plain_string_literals() {
+    let backend = Backend::new_test();
+    let uri_config = Url::parse("file:///project/config/app.php").unwrap();
+    let uri_use = Url::parse("file:///project/src/Service.php").unwrap();
+
+    let config_php = concat!(
+        "<?php\n",                 // L0
+        "return [\n",              // L1
+        "    'name' => 'demo',\n", // L2
+        "];\n",                    // L3
+    );
+    let use_php = concat!(
+        "<?php\n",                    // L0
+        "$x = 'app.name';\n",         // L1
+        "$y = config('app.name');\n", // L2
+    );
+
+    open_file(&backend, &uri_config, config_php).await;
+    open_file(&backend, &uri_use, use_php).await;
+
+    // Cursor on bare string literal 'app.name' (not in config(...) call).
+    let locs = find_references(&backend, &uri_use, 1, 7, true).await;
+    assert!(
+        locs.is_empty(),
+        "Plain string literal should not trigger Laravel config references, got {:?}",
+        locs
+    );
+}

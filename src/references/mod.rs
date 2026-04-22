@@ -31,11 +31,12 @@ use tower_lsp::lsp_types::{Location, Position, Range, Url};
 
 use crate::Backend;
 use crate::completion::resolver::Loaders;
+use crate::virtual_members::laravel;
 use crate::symbol_map::{SelfStaticParentKind, SymbolKind, SymbolMap};
 use crate::types::{ClassInfo, MAX_INHERITANCE_DEPTH, ResolvedType};
 use crate::util::{
     build_fqn, collect_php_files_gitignore, find_class_at_offset, offset_to_position,
-    position_to_offset, strip_fqn_prefix,
+    position_to_offset, push_unique_location, strip_fqn_prefix,
 };
 
 impl Backend {
@@ -69,6 +70,15 @@ impl Backend {
             } else {
                 Some(locations)
             };
+        }
+
+        // Laravel config key fallback:
+        // - `config('app.name')` / `Config::get('app.name')`
+        // - keys inside `config/*.php` declarations
+        if let Some(locations) =
+            laravel::find_config_references(self, uri, content, position, include_declaration)
+        {
+            return Some(locations);
         }
 
         None
@@ -370,7 +380,7 @@ impl Backend {
     /// snapshot of every symbol map whose URI does not fall under the
     /// vendor directory or the internal stub scheme.  All four cross-file
     /// reference scanners use this to restrict results to user code.
-    fn user_file_symbol_maps(&self) -> Vec<(String, Arc<SymbolMap>)> {
+    pub(crate) fn user_file_symbol_maps(&self) -> Vec<(String, Arc<SymbolMap>)> {
         self.ensure_workspace_indexed();
 
         let vendor_prefixes = self.vendor_uri_prefixes.lock().clone();
@@ -796,6 +806,11 @@ impl Backend {
         locations
     }
 
+    /// Find references for a Laravel config key.
+    ///
+    /// Supports both cursor origins:
+    /// - usage site: `config('app.name')` / `Config::get('app.name')`
+    /// - declaration site: `'name' => ...` inside `config/app.php`
     fn resolve_keyword_to_fqn(
         &self,
         ssp_kind: &SelfStaticParentKind,
@@ -1388,21 +1403,6 @@ fn class_names_match(resolved: &str, target: &str, target_short: &str) -> bool {
         return resolved == target_short;
     }
     false
-}
-
-/// Push a location only if it is not already present (deduplication).
-fn push_unique_location(locations: &mut Vec<Location>, uri: &Url, start: Position, end: Position) {
-    let already_present = locations.iter().any(|l| {
-        l.uri == *uri
-            && l.range.start.line == start.line
-            && l.range.start.character == start.character
-    });
-    if !already_present {
-        locations.push(Location {
-            uri: uri.clone(),
-            range: Range { start, end },
-        });
-    }
 }
 
 #[cfg(test)]

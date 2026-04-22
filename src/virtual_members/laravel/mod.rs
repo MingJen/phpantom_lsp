@@ -78,12 +78,15 @@
 mod accessors;
 mod builder;
 mod casts;
+mod config_keys;
 mod factory;
 mod helpers;
 pub(crate) mod patches;
 mod relationships;
 mod scopes;
 mod where_property;
+
+pub(crate) use config_keys::{find_config_references, resolve_config_definition};
 
 pub use helpers::extends_eloquent_model;
 pub(crate) use helpers::{accessor_method_candidates, camel_to_snake};

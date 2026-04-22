@@ -21,6 +21,7 @@ use super::member::{MemberAccessHint, MemberDefinitionCtx};
 use super::point_location;
 use crate::Backend;
 use crate::composer;
+use crate::virtual_members::laravel;
 use crate::symbol_map::{SelfStaticParentKind, SymbolKind};
 use crate::types::{AccessKind, ClassInfo};
 use crate::util::{find_class_at_offset, position_to_offset, short_name};
@@ -40,9 +41,16 @@ impl Backend {
         // Consult precomputed symbol map (retries one byte earlier for
         // end-of-token edge cases).
         let symbol = self.lookup_symbol_at_position(uri, content, position);
-        symbol
+        let resolved = symbol
             .as_ref()
-            .and_then(|s| self.resolve_from_symbol(&s.kind, uri, content, position, s.start))
+            .and_then(|s| self.resolve_from_symbol(&s.kind, uri, content, position, s.start));
+        if resolved.is_some() {
+            return resolved;
+        }
+
+        // Laravel config fallback:
+        // `config('app.name')` / `Config::get('app.name')` -> config/app.php key.
+        laravel::resolve_config_definition(self, content, position)
     }
 
     /// Look up the symbol at the given byte offset in the precomputed
