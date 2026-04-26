@@ -1019,6 +1019,18 @@ impl Backend {
         self.config.lock().clone()
     }
 
+    /// Return `true` when the workspace root contains an `artisan` file,
+    /// the definitive signal that this is a Laravel project.
+    ///
+    /// Used to gate Laravel-specific navigation (config keys, env vars) so
+    /// that `.env` files in non-Laravel PHP projects are left untouched.
+    pub(crate) fn is_laravel_project(&self) -> bool {
+        self.workspace_root
+            .read()
+            .as_deref()
+            .is_some_and(|root| root.join("artisan").exists())
+    }
+
     /// Replace the current configuration.
     ///
     /// Used by integration tests to enable opt-in diagnostics like

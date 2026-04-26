@@ -122,8 +122,12 @@ fn framework_stubs() -> Vec<(&'static str, &'static str)> {
 }
 
 /// Build a PSR-4 workspace from the framework stubs plus extra app files.
+///
+/// Always includes an `artisan` file so that `Backend::is_laravel_project()`
+/// returns `true`, enabling config-key and env-var navigation in tests.
 fn make_workspace(app_files: &[(&str, &str)]) -> (phpantom_lsp::Backend, tempfile::TempDir) {
     let mut files: Vec<(&str, &str)> = framework_stubs();
+    files.push(("artisan", "#!/usr/bin/env php\n"));
     files.extend_from_slice(app_files);
     create_psr4_workspace(COMPOSER_JSON, &files)
 }
@@ -2601,7 +2605,7 @@ class Service {
 }
 
 #[tokio::test]
-async fn test_goto_definition_laravel_env_missing_key_falls_back_to_line_zero() {
+async fn test_goto_definition_laravel_env_missing_key_returns_none() {
     let service_php = "\
 <?php
 namespace App\\Services;
@@ -2629,19 +2633,9 @@ class Service {
     )
     .await;
 
-    // A result is still returned (pointing to .env line 0) so the editor
-    // opens the file even when the key is absent.
-    let result = result.expect("Should still return a location pointing to .env line 0");
-    let target_uri = definition_uri(&result);
     assert!(
-        target_uri.as_str().ends_with("/.env"),
-        "Should jump to .env, got: {}",
-        target_uri
-    );
-    assert_eq!(
-        definition_line(&result),
-        0,
-        "Unknown key falls back to line 0"
+        result.is_none(),
+        "Should return None when key is absent from all env files"
     );
 }
 
@@ -2673,5 +2667,298 @@ class Service {
     assert!(
         result.is_none(),
         "Should return None when .env does not exist"
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_laravel_env_local_takes_priority_over_env() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $key = env('APP_KEY');
+    }
+}
+";
+    // .env.local has APP_KEY on line 0; .env has it on line 1.
+    let dot_env_local = "APP_KEY=local-override\n";
+    let dot_env = "APP_NAME=Laravel\nAPP_KEY=base64:abc123\n";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        (".env.local", dot_env_local),
+        (".env", dot_env),
+    ]);
+
+    // Cursor on "APP_KEY" — line 4, char 20.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        20,
+    )
+    .await;
+
+    let result = result.expect("Should resolve when key exists in multiple env files");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/.env.local"),
+        ".env.local has higher priority than .env, got: {}",
+        target_uri
+    );
+    assert_eq!(definition_line(&result), 0, "APP_KEY is on line 0 in .env.local");
+}
+
+#[tokio::test]
+async fn test_find_references_laravel_env_across_files() {
+    let service_a_php = "\
+<?php
+namespace App\\Services;
+class ServiceA {
+    public function demo(): void {
+        $key = env('APP_KEY');
+    }
+}
+";
+    let service_b_php = "\
+<?php
+namespace App\\Services;
+class ServiceB {
+    public function boot(): void {
+        $key = env('APP_KEY');
+        $debug = env('APP_DEBUG', false);
+    }
+}
+";
+    let dot_env = "APP_NAME=Laravel\nAPP_KEY=base64:abc123\nAPP_DEBUG=false\n";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/ServiceA.php", service_a_php),
+        ("src/Services/ServiceB.php", service_b_php),
+        (".env", dot_env),
+    ]);
+
+    // Open ServiceB too so its symbols are in the index.
+    let uri_b = Url::from_file_path(dir.path().join("src/Services/ServiceB.php")).unwrap();
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri_b,
+                language_id: "php".to_string(),
+                version: 1,
+                text: service_b_php.to_string(),
+            },
+        })
+        .await;
+
+    // Cursor on "APP_KEY" in ServiceA — line 4, char 20.
+    let results = find_references_at(
+        &backend,
+        &dir,
+        "src/Services/ServiceA.php",
+        service_a_php,
+        4,
+        20,
+        false,
+    )
+    .await;
+
+    let results = results.expect("find_references should return locations for env key");
+    // 2 PHP usages (ServiceA + ServiceB), no declaration.
+    assert_eq!(
+        results.len(),
+        2,
+        "Expected 2 env('APP_KEY') usages, got {}: {:#?}",
+        results.len(),
+        results
+    );
+    assert!(
+        results.iter().all(|l| !l.uri.as_str().ends_with("/.env")),
+        "Declaration should not be included when include_declaration is false"
+    );
+}
+
+#[tokio::test]
+async fn test_find_references_laravel_env_include_declaration() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $key = env('APP_KEY');
+    }
+}
+";
+    // APP_KEY is on line 1 in .env and line 0 in .env.local.
+    let dot_env = "APP_NAME=Laravel\nAPP_KEY=base64:abc123\n";
+    let dot_env_local = "APP_KEY=local-override\n";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        (".env", dot_env),
+        (".env.local", dot_env_local),
+    ]);
+
+    // Cursor on "APP_KEY" — line 4, char 20.
+    let results = find_references_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        20,
+        true,
+    )
+    .await;
+
+    let results = results.expect("find_references with include_declaration should return locations");
+    // 1 PHP usage + 2 declaration sites (.env + .env.local).
+    assert_eq!(
+        results.len(),
+        3,
+        "Expected 1 usage + 2 env declarations, got {}: {:#?}",
+        results.len(),
+        results
+    );
+    let env_locations: Vec<_> = results
+        .iter()
+        .filter(|l| {
+            l.uri.as_str().ends_with("/.env") || l.uri.as_str().ends_with("/.env.local")
+        })
+        .collect();
+    assert_eq!(
+        env_locations.len(),
+        2,
+        "Expected locations in both .env and .env.local"
+    );
+}
+
+// ─── References from .env file ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_find_references_from_dotenv_key() {
+    let service_a_php = "\
+<?php
+namespace App\\Services;
+class ServiceA {
+    public function demo(): void {
+        $key = env('APP_KEY');
+    }
+}
+";
+    let service_b_php = "\
+<?php
+namespace App\\Services;
+class ServiceB {
+    public function boot(): void {
+        $k = env('APP_KEY');
+        $n = env('APP_NAME');
+    }
+}
+";
+    // APP_KEY is on line 1 (0-indexed)
+    let dot_env = "APP_NAME=Laravel\nAPP_KEY=base64:abc123\n";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/ServiceA.php", service_a_php),
+        ("src/Services/ServiceB.php", service_b_php),
+        (".env", dot_env),
+    ]);
+
+    // Open ServiceB so its symbols are indexed.
+    let uri_b = Url::from_file_path(dir.path().join("src/Services/ServiceB.php")).unwrap();
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri_b,
+                language_id: "php".to_string(),
+                version: 1,
+                text: service_b_php.to_string(),
+            },
+        })
+        .await;
+
+    // Cursor on "APP_KEY=" line in .env — line 1, char 0.
+    let results = find_references_at(&backend, &dir, ".env", dot_env, 1, 0, false).await;
+
+    let results = results.expect("find_references from .env should return PHP usages");
+    // 2 PHP call sites: ServiceA + ServiceB both call env('APP_KEY')
+    assert_eq!(
+        results.len(),
+        2,
+        "Expected 2 env('APP_KEY') usages from .env cursor, got {}: {:#?}",
+        results.len(),
+        results
+    );
+    assert!(
+        results.iter().all(|l| l.uri.as_str().ends_with(".php")),
+        "All locations should be PHP files"
+    );
+}
+
+#[tokio::test]
+async fn test_find_references_from_dotenv_include_declaration() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $key = env('DB_HOST');
+    }
+}
+";
+    // DB_HOST is on line 2 (0-indexed)
+    let dot_env = "APP_NAME=Laravel\nAPP_KEY=secret\nDB_HOST=127.0.0.1\n";
+    let dot_env_local = "DB_HOST=localhost\n";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        (".env", dot_env),
+        (".env.local", dot_env_local),
+    ]);
+
+    // Cursor on "DB_HOST=" line in .env — line 2, char 0.
+    let results = find_references_at(&backend, &dir, ".env", dot_env, 2, 0, true).await;
+
+    let results =
+        results.expect("find_references with include_declaration from .env should return results");
+    // 1 PHP usage + 2 declarations (.env line 2 + .env.local line 0)
+    assert_eq!(
+        results.len(),
+        3,
+        "Expected 1 PHP usage + 2 env declarations, got {}: {:#?}",
+        results.len(),
+        results
+    );
+}
+
+#[tokio::test]
+async fn test_find_references_from_dotenv_comment_line_returns_none() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $key = env('APP_KEY');
+    }
+}
+";
+    // Line 0 is a comment
+    let dot_env = "# This is a comment\nAPP_KEY=secret\n";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        (".env", dot_env),
+    ]);
+
+    // Cursor on the comment line — line 0, char 0.
+    let results = find_references_at(&backend, &dir, ".env", dot_env, 0, 0, false).await;
+
+    assert!(
+        results.is_none(),
+        "Comment lines in .env should return None"
     );
 }

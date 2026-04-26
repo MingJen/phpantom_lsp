@@ -52,6 +52,17 @@ impl Backend {
         position: Position,
         include_declaration: bool,
     ) -> Option<Vec<Location>> {
+        // When the cursor is inside a .env* file, extract the key from the
+        // current line and find all matching env('KEY') PHP call sites.
+        if is_dotenv_uri(uri) && self.is_laravel_project() {
+            return laravel::find_env_references_from_dotenv(
+                self,
+                content,
+                position,
+                include_declaration,
+            );
+        }
+
         // Consult the precomputed symbol map for the current file
         // (retries one byte earlier for end-of-token edge cases).
         let symbol = self.lookup_symbol_at_position(uri, content, position);
@@ -75,10 +86,12 @@ impl Backend {
         // Also handles cases where the cursor is on a string literal that was
         // indexed as a ClassReference (e.g. 'User' => ...) but the user
         // actually wants config references.
-        if let Some(locations) =
-            laravel::find_config_references(self, uri, content, position, include_declaration)
-        {
-            return Some(locations);
+        if self.is_laravel_project() {
+            if let Some(locations) =
+                laravel::find_config_references(self, uri, content, position, include_declaration)
+            {
+                return Some(locations);
+            }
         }
 
         None
@@ -1411,6 +1424,13 @@ fn class_names_match(resolved: &str, target: &str, target_short: &str) -> bool {
         return resolved == target_short;
     }
     false
+}
+
+/// Return `true` when `uri` refers to a `.env*` file (e.g. `.env`,
+/// `.env.local`, `.env.testing`).  Used to route references requests that
+/// arrive from env files to the Laravel env-key handler.
+fn is_dotenv_uri(uri: &str) -> bool {
+    uri.rsplit('/').next().is_some_and(|name| name.starts_with(".env"))
 }
 
 #[cfg(test)]

@@ -2065,29 +2065,75 @@ class SignatureHelpDemo
 
 
 // ── Laravel Config & Env Navigation ─────────────────────────────────────────
+// Requires: an `artisan` file in the workspace root (standard Laravel layout).
+// PHPantom uses `artisan` presence to detect Laravel projects and will not
+// activate config/env navigation for non-Laravel PHP codebases.
 
 class LaravelConfigEnvDemo
 {
     /**
-     * "Go to Definition" and "Find All References" for config keys and env vars.
+     * Go-to-Definition and Find-All-References for Laravel config keys.
+     *
+     * Prerequisite: a `config/` directory with PHP files returning arrays,
+     * e.g. config/app.php → ['name' => 'Laravel', 'timezone' => 'UTC'].
      *
      * Try:
-     *  1. Ctrl+Click "app.name" to jump to config/app.php (mocked in tests).
-     *  2. Ctrl+Click "APP_KEY" to jump to .env (mocked in tests).
-     *  3. "Find All References" on "app.name" to see all usage sites.
+     *  - Ctrl+Click "app.name"       → jumps to the 'name' key in config/app.php
+     *  - Ctrl+Click "mail.from.name" → resolves nested arrays across config files
+     *  - Ctrl+Click "database.connections.mysql.host" → follows dot-path into subdirs
+     *  - Find All References on "app.name" → lists every config(), Config::get(),
+     *    and Config::set() call site + the declaration in config/app.php
      */
-    public function demo(): void
+    public function configDemo(): void
     {
-        // Global helper
+        // Global helper — resolved via dot-path into config/app.php
         config('app.name');
+        config('app.timezone');
 
-        // Facade methods
-        \Config::get('app.name');
-        \Illuminate\Support\Facades\Config::set('app.env', 'production');
+        // Facade — same navigation as the global helper
+        \Config::get('database.default');
+        \Config::set('app.env', 'production');
 
-        // Env helper
+        // Fully-qualified facade works too
+        \Illuminate\Support\Facades\Config::get('mail.from.name');
+    }
+
+    /**
+     * Go-to-Definition and Find-All-References for Laravel env variables.
+     *
+     * Prerequisite: one or more env files in the workspace root.  PHPantom
+     * probes them in the following priority order (highest first):
+     *
+     *   .env.local  →  .env  →  .env.testing  →  .env.production
+     *   →  .env.staging  →  .env.example
+     *
+     * The first file that contains the key wins for Go-to-Definition.
+     * Find-All-References reports every PHP env() call site across the project,
+     * and when "Include Declaration" is checked it also highlights the KEY=value
+     * line in every env file where the key is defined.
+     *
+     * Try:
+     *  - Ctrl+Click "APP_KEY"         → jumps to APP_KEY= in .env.local if it
+     *                                   exists, otherwise .env
+     *  - Ctrl+Click "DB_HOST"         → jumps to DB_HOST= in the highest-priority
+     *                                   env file that declares it
+     *  - Find All References on "APP_KEY" (include declaration)
+     *                                 → all env('APP_KEY') call sites in PHP
+     *                                   + the APP_KEY= line in each env file
+     *
+     * Note: navigation is NOT activated for non-Laravel projects even if a
+     * .env file exists, because .env is also used by Symfony, Node.js, etc.
+     */
+    public function envDemo(): void
+    {
+        // Go-to-Definition jumps to the highest-priority env file that defines the key.
         env('APP_KEY');
+        env('APP_NAME');
+
+        // Default values are ignored for navigation; cursor on the key still works.
+        env('DB_HOST', 'localhost');
         env('DB_PASSWORD', 'secret');
+        env('CACHE_DRIVER', 'file');
     }
 }
 

@@ -38,6 +38,13 @@ impl Backend {
         content: &str,
         position: Position,
     ) -> Option<Location> {
+        // .env* files have no "definition" target — the key IS the declaration.
+        // Return None so the editor shows "No definition found" instead of an
+        // error; users should use "Find All References" for PHP call sites.
+        if is_dotenv_uri(uri) {
+            return None;
+        }
+
         // Consult precomputed symbol map (retries one byte earlier for
         // end-of-token edge cases).
         let symbol = self.lookup_symbol_at_position(uri, content, position);
@@ -48,15 +55,21 @@ impl Backend {
             return Some(resolved);
         }
 
-        // Laravel config fallback: declaration sites in config/*.php
-        if let Some(loc) =
-            laravel::resolve_config_key_definition_fallback(self, uri, content, position)
-        {
-            return Some(loc);
+        if self.is_laravel_project() {
+            // Config fallback: declaration sites in config/*.php
+            if let Some(loc) =
+                laravel::resolve_config_key_definition_fallback(self, uri, content, position)
+            {
+                return Some(loc);
+            }
+
+            // env() fallback: fires when the file hasn't been indexed yet.
+            if let Some(loc) = laravel::resolve_env_definition_fallback(self, content, position) {
+                return Some(loc);
+            }
         }
 
-        // env() fallback: not yet indexed in the symbol map.
-        laravel::resolve_env_definition(self, content, position)
+        None
     }
 
     /// Look up the symbol at the given byte offset in the precomputed
@@ -847,4 +860,8 @@ impl Backend {
 
         None
     }
+}
+
+fn is_dotenv_uri(uri: &str) -> bool {
+    uri.rsplit('/').next().is_some_and(|name| name.starts_with(".env"))
 }

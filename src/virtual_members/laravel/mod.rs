@@ -92,7 +92,10 @@ pub(crate) use config_keys::{
     find_all_config_references, resolve_config_key_declaration,
     resolve_config_key_definition_fallback,
 };
-pub(crate) use env_vars::resolve_env_definition;
+pub(crate) use env_vars::{
+    find_env_references, find_env_references_from_dotenv, resolve_env_definition_fallback,
+    resolve_env_key_definition,
+};
 
 /// Unified go-to-definition entry point for all Laravel string-key spans.
 ///
@@ -105,9 +108,13 @@ pub(crate) fn resolve_laravel_string_key(
     kind: &crate::symbol_map::LaravelStringKind,
     key: &str,
 ) -> Option<tower_lsp::lsp_types::Location> {
+    if !backend.is_laravel_project() {
+        return None;
+    }
     use crate::symbol_map::LaravelStringKind;
     match kind {
         LaravelStringKind::Config => resolve_config_key_declaration(backend, key),
+        LaravelStringKind::Env => resolve_env_key_definition(backend, key),
     }
 }
 
@@ -122,11 +129,15 @@ pub(crate) fn find_laravel_string_key_references(
     snapshot: &[(String, std::sync::Arc<crate::symbol_map::SymbolMap>)],
     include_declaration: bool,
 ) -> Vec<tower_lsp::lsp_types::Location> {
+    if !backend.is_laravel_project() {
+        return Vec::new();
+    }
     use crate::symbol_map::LaravelStringKind;
     match kind {
         LaravelStringKind::Config => {
             find_all_config_references(backend, key, snapshot, include_declaration)
         }
+        LaravelStringKind::Env => find_env_references(backend, key, snapshot, include_declaration),
     }
 }
 

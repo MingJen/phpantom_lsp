@@ -343,13 +343,33 @@ impl LanguageServer for Backend {
         // lsp-types 0.94 does not expose a `type_hierarchy_provider`
         // field on `ServerCapabilities`, so we register the capability
         // dynamically via `client/registerCapability` instead.
+        //
+        // We also register `textDocument/references` for `.env*` files so
+        // that editors route "Find All References" from env-file keys to
+        // this server.  The document-selector pattern `**/.env*` matches
+        // `.env`, `.env.local`, `.env.testing`, etc.
         if let Some(client) = &self.client {
+            let env_selector = serde_json::json!({
+                "documentSelector": [{ "scheme": "file", "pattern": "**/.env*" }]
+            });
             let _ = client
-                .register_capability(vec![Registration {
-                    id: "type-hierarchy".to_string(),
-                    method: "textDocument/prepareTypeHierarchy".to_string(),
-                    register_options: None,
-                }])
+                .register_capability(vec![
+                    Registration {
+                        id: "type-hierarchy".to_string(),
+                        method: "textDocument/prepareTypeHierarchy".to_string(),
+                        register_options: None,
+                    },
+                    Registration {
+                        id: "env-references".to_string(),
+                        method: "textDocument/references".to_string(),
+                        register_options: Some(env_selector.clone()),
+                    },
+                    Registration {
+                        id: "env-definition".to_string(),
+                        method: "textDocument/definition".to_string(),
+                        register_options: Some(env_selector),
+                    },
+                ])
                 .await;
         }
     }
@@ -380,14 +400,18 @@ impl LanguageServer for Backend {
             .write()
             .insert(uri.clone(), Arc::clone(&text));
 
-        // Parse and update AST map, use map, and namespace map
-        self.update_ast(&uri, &text);
+        // Only PHP files get AST parsing and diagnostics; other file types
+        // (e.g. .env) are stored above for content lookup but skipped here.
+        if uri.ends_with(".php") {
+            // Parse and update AST map, use map, and namespace map
+            self.update_ast(&uri, &text);
 
-        // Schedule diagnostics asynchronously so that the first-open
-        // response is not blocked by lazy stub parsing (which can take
-        // tens of seconds when many class references trigger cache-miss
-        // parses).  This matches the did_change path.
-        self.schedule_diagnostics(uri.clone());
+            // Schedule diagnostics asynchronously so that the first-open
+            // response is not blocked by lazy stub parsing (which can take
+            // tens of seconds when many class references trigger cache-miss
+            // parses).  This matches the did_change path.
+            self.schedule_diagnostics(uri.clone());
+        }
 
         self.log(MessageType::INFO, format!("Opened file: {}", uri))
             .await;
@@ -404,20 +428,22 @@ impl LanguageServer for Backend {
                 .write()
                 .insert(uri.clone(), Arc::clone(&text));
 
-            // Re-parse and update AST map, use map, and namespace map
-            let signature_changed = self.update_ast(&uri, &text);
+            if uri.ends_with(".php") {
+                // Re-parse and update AST map, use map, and namespace map
+                let signature_changed = self.update_ast(&uri, &text);
 
-            // Schedule diagnostics in a background task with debouncing.
-            // This returns immediately so that completion, hover, and
-            // signature help are never blocked by diagnostic computation.
-            self.schedule_diagnostics(uri.clone());
+                // Schedule diagnostics in a background task with debouncing.
+                // This returns immediately so that completion, hover, and
+                // signature help are never blocked by diagnostic computation.
+                self.schedule_diagnostics(uri.clone());
 
-            // When a class signature changed (method/property added,
-            // removed, or modified; class renamed; parent changed; etc.)
-            // other open files may have stale diagnostics that reference
-            // the affected classes.  Queue them all for a re-check.
-            if signature_changed {
-                self.schedule_diagnostics_for_open_files(&uri);
+                // When a class signature changed (method/property added,
+                // removed, or modified; class renamed; parent changed; etc.)
+                // other open files may have stale diagnostics that reference
+                // the affected classes.  Queue them all for a re-check.
+                if signature_changed {
+                    self.schedule_diagnostics_for_open_files(&uri);
+                }
             }
         }
     }

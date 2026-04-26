@@ -1602,6 +1602,13 @@ fn extract_from_expression<'a>(
                                 &mut ctx.spans,
                             );
                         }
+                        if name_clean.eq_ignore_ascii_case("env") {
+                            try_emit_env_key_span(
+                                &func_call.argument_list,
+                                ctx.content,
+                                &mut ctx.spans,
+                            );
+                        }
                     }
                     _ => {
                         extract_from_expression(func_call.function, ctx, scope_start);
@@ -2921,6 +2928,39 @@ fn try_emit_config_key_span(
         end: inner_end,
         kind: SymbolKind::LaravelStringKey {
             kind: crate::symbol_map::LaravelStringKind::Config,
+            key: key.to_string(),
+        },
+    });
+}
+
+/// Emit a [`SymbolKind::LaravelStringKey`] span for the first string argument
+/// of an `env()` call so that go-to-definition and find-references can use the
+/// pre-built symbol map instead of re-parsing every file on demand.
+fn try_emit_env_key_span(
+    argument_list: &ArgumentList<'_>,
+    content: &str,
+    spans: &mut Vec<SymbolSpan>,
+) {
+    let Some(first_arg) = argument_list.arguments.iter().next() else {
+        return;
+    };
+    let Expression::Literal(literal::Literal::String(s)) = first_arg.value() else {
+        return;
+    };
+    let inner_start = s.span.start.offset + 1;
+    let inner_end = s.span.end.offset - 1;
+    if inner_start >= inner_end || inner_end as usize > content.len() {
+        return;
+    }
+    let key = &content[inner_start as usize..inner_end as usize];
+    if key.is_empty() {
+        return;
+    }
+    spans.push(SymbolSpan {
+        start: inner_start,
+        end: inner_end,
+        kind: SymbolKind::LaravelStringKey {
+            kind: crate::symbol_map::LaravelStringKind::Env,
             key: key.to_string(),
         },
     });

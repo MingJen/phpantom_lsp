@@ -200,6 +200,8 @@ pub(crate) enum SymbolKind {
 pub(crate) enum LaravelStringKind {
     /// A `config('dot.key')` or `Config::get('dot.key')` call.
     Config,
+    /// An `env('KEY')` call.
+    Env,
 }
 
 // ─── Template parameter definition site structures ──────────────────────────
