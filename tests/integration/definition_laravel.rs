@@ -3634,14 +3634,14 @@ async fn test_goto_definition_laravel_route_static_group_call() {
 namespace App\\Services;
 class Service {
     public function demo(): void {
-        $url = route('question-view-page');
+        $url = route('posts.show');
     }
 }
 ";
     let routes_web = "\
 <?php
 Route::group(['middleware' => 'web'], function () {
-    Route::get('/qa/{question_id}', 'DeprecatedController@index')->name('question-view-page');
+    Route::get('/posts/{id}', [PostController::class, 'show'])->name('posts.show');
 });
 ";
 
@@ -3650,7 +3650,7 @@ Route::group(['middleware' => 'web'], function () {
         ("routes/web.php", routes_web),
     ]);
 
-    // Cursor on "question-view-page" — line 4, char 22.
+    // Cursor on "posts.show" — line 4, char 22.
     let result = goto_definition_at(
         &backend,
         &dir,
@@ -3662,7 +3662,7 @@ Route::group(['middleware' => 'web'], function () {
     .await;
 
     let result = result.expect(
-        "route('question-view-page') inside Route::group([...], fn) should be resolved",
+        "route('posts.show') inside Route::group([...], fn) should be resolved",
     );
     let target_uri = definition_uri(&result);
     assert!(
@@ -3673,7 +3673,7 @@ Route::group(['middleware' => 'web'], function () {
     assert_eq!(
         definition_line(&result),
         2,
-        "->name('question-view-page') is on line 2 (0-indexed)"
+        "->name('posts.show') is on line 2 (0-indexed)"
     );
 }
 
@@ -3729,27 +3729,27 @@ Route::group(['as' => 'admin.', 'prefix' => 'admin', 'middleware' => 'auth'], fu
 
 #[tokio::test]
 async fn test_goto_definition_laravel_route_in_subdirectory() {
-    // Routes defined in routes/web/deprecated-web.php — a subdirectory.
+    // Routes can live in subdirectories like routes/web/, routes/api/, etc.
     let service_php = "\
 <?php
 namespace App\\Services;
 class Service {
     public function demo(): void {
-        $url = route('question-view-page');
+        $url = route('products.index');
     }
 }
 ";
-    let routes_deprecated = "\
+    let routes_products = "\
 <?php
-Route::get('/qa/{question_id}', 'DeprecatedController@index')->name('question-view-page');
+Route::get('/products', [ProductController::class, 'index'])->name('products.index');
 ";
 
     let (backend, dir) = make_workspace(&[
         ("src/Services/Service.php", service_php),
-        ("routes/web/deprecated-web.php", routes_deprecated),
+        ("routes/web/products.php", routes_products),
     ]);
 
-    // Cursor on "question-view-page" — line 4, char 22.
+    // Cursor on "products.index" — line 4, char 22.
     let result = goto_definition_at(
         &backend,
         &dir,
@@ -3763,8 +3763,8 @@ Route::get('/qa/{question_id}', 'DeprecatedController@index')->name('question-vi
     let result = result.expect("route in routes/web/ subdirectory should be found recursively");
     let target_uri = definition_uri(&result);
     assert!(
-        target_uri.as_str().ends_with("/routes/web/deprecated-web.php"),
-        "Should jump to routes/web/deprecated-web.php, got: {}",
+        target_uri.as_str().ends_with("/routes/web/products.php"),
+        "Should jump to routes/web/products.php, got: {}",
         target_uri
     );
     assert_eq!(definition_line(&result), 1);
