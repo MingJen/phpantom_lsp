@@ -84,7 +84,10 @@ mod factory;
 mod helpers;
 pub(crate) mod patches;
 mod relationships;
+mod route_names;
 mod scopes;
+mod trans_keys;
+mod view_names;
 mod where_property;
 
 pub(crate) use config_keys::find_config_references;
@@ -108,6 +111,9 @@ pub(crate) fn resolve_laravel_string_key(
     use crate::symbol_map::LaravelStringKind;
     match kind {
         LaravelStringKind::Config => resolve_config_key_declaration(backend, key),
+        LaravelStringKind::View => view_names::resolve_view_definition(backend, key),
+        LaravelStringKind::Route => route_names::resolve_route_definition(backend, key),
+        LaravelStringKind::Trans => trans_keys::resolve_trans_definition(backend, key),
     }
 }
 
@@ -126,6 +132,9 @@ pub(crate) fn find_laravel_string_key_references(
     match kind {
         LaravelStringKind::Config => {
             find_all_config_references(backend, key, snapshot, include_declaration)
+        }
+        LaravelStringKind::View | LaravelStringKind::Route | LaravelStringKind::Trans => {
+            Vec::new()
         }
     }
 }
