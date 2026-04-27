@@ -3625,3 +3625,104 @@ Route::name('admin.')->group(function () {
         target_uri
     );
 }
+
+#[tokio::test]
+async fn test_goto_definition_laravel_route_static_group_call() {
+    // Route::group([options], fn(){}) — static call, common old-style pattern.
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $url = route('question-view-page');
+    }
+}
+";
+    let routes_web = "\
+<?php
+Route::group(['middleware' => 'web'], function () {
+    Route::get('/qa/{question_id}', 'DeprecatedController@index')->name('question-view-page');
+});
+";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("routes/web.php", routes_web),
+    ]);
+
+    // Cursor on "question-view-page" — line 4, char 22.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        22,
+    )
+    .await;
+
+    let result = result.expect(
+        "route('question-view-page') inside Route::group([...], fn) should be resolved",
+    );
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/routes/web.php"),
+        "Should jump to routes/web.php, got: {}",
+        target_uri
+    );
+    assert_eq!(
+        definition_line(&result),
+        2,
+        "->name('question-view-page') is on line 2 (0-indexed)"
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_laravel_route_static_group_with_as_prefix() {
+    // Route::group(['as' => 'admin.', ...], fn(){}) — static call with array 'as' prefix.
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $url = route('admin.dashboard');
+    }
+}
+";
+    let routes_web = "\
+<?php
+Route::group(['as' => 'admin.', 'prefix' => 'admin', 'middleware' => 'auth'], function () {
+    Route::get('/dashboard', 'DashboardController@index')->name('dashboard');
+});
+";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("routes/web.php", routes_web),
+    ]);
+
+    // Cursor on "admin.dashboard" — line 4, char 22.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        22,
+    )
+    .await;
+
+    let result = result
+        .expect("Route::group(['as'=>'admin.', ...], fn) should resolve 'admin.dashboard'");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/routes/web.php"),
+        "Should jump to routes/web.php, got: {}",
+        target_uri
+    );
+    assert_eq!(
+        definition_line(&result),
+        2,
+        "->name('dashboard') is on line 2 (0-indexed)"
+    );
+}
