@@ -256,13 +256,23 @@ fn chain_name_prefix<'a>(expr: &Expression<'a>, content: &str) -> String {
 
 // ─── File collector ──────────────────────────────────────────────────────────
 
+/// Recursively collect all `.php` files under `dir`.
 fn collect_php_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_php_files_recursive(dir, &mut out);
+    out
+}
+
+fn collect_php_files_recursive(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
+        return;
     };
-    entries
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("php"))
-        .collect()
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_php_files_recursive(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("php") {
+            out.push(path);
+        }
+    }
 }
