@@ -3150,3 +3150,377 @@ class Service {
         "Should return None when .env does not exist"
     );
 }
+
+// ─── view() go-to-definition ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_goto_definition_laravel_view_simple() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $v = view('welcome');
+    }
+}
+";
+    let blade = "<!-- Welcome page -->";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("resources/views/welcome.blade.php", blade),
+    ]);
+
+    // Cursor on "welcome" in view('welcome') — line 4, char 19.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        19,
+    )
+    .await;
+
+    let result = result.expect("view('welcome') should resolve to welcome.blade.php");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/resources/views/welcome.blade.php"),
+        "Should jump to resources/views/welcome.blade.php, got: {}",
+        target_uri
+    );
+    assert_eq!(definition_line(&result), 0, "Should point to line 0 of the blade file");
+}
+
+#[tokio::test]
+async fn test_goto_definition_laravel_view_nested() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $v = view('components.button');
+    }
+}
+";
+    let blade = "<!-- Button component -->";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("resources/views/components/button.blade.php", blade),
+    ]);
+
+    // Cursor on "components.button" — line 4, char 19.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        19,
+    )
+    .await;
+
+    let result = result.expect("view('components.button') should resolve to blade template");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri
+            .as_str()
+            .ends_with("/resources/views/components/button.blade.php"),
+        "Should jump to components/button.blade.php, got: {}",
+        target_uri
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_laravel_view_facade() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $v = View::make('admin.index');
+    }
+}
+";
+    let blade = "<!-- Admin index -->";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("resources/views/admin/index.blade.php", blade),
+    ]);
+
+    // Cursor on "admin.index" in View::make('admin.index') — line 4, char 25.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        25,
+    )
+    .await;
+
+    let result = result.expect("View::make('admin.index') should resolve to blade template");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri
+            .as_str()
+            .ends_with("/resources/views/admin/index.blade.php"),
+        "Should jump to admin/index.blade.php, got: {}",
+        target_uri
+    );
+}
+
+// ─── route() go-to-definition ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_goto_definition_laravel_route_simple() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $url = route('home');
+    }
+}
+";
+    let routes_web = "\
+<?php
+Route::get('/')->name('home');
+Route::get('/user/profile')->name('user.profile');
+";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("routes/web.php", routes_web),
+    ]);
+
+    // Cursor on "home" in route('home') — line 4, char 22.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        22,
+    )
+    .await;
+
+    let result = result.expect("route('home') should resolve to ->name('home') in routes/web.php");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/routes/web.php"),
+        "Should jump to routes/web.php, got: {}",
+        target_uri
+    );
+    assert_eq!(
+        definition_line(&result),
+        1,
+        "->name('home') is on line 1 (0-indexed) in routes/web.php"
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_laravel_route_dotted() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $url = route('user.profile');
+    }
+}
+";
+    let routes_web = "\
+<?php
+Route::get('/')->name('home');
+Route::get('/user/profile')->name('user.profile');
+";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("routes/web.php", routes_web),
+    ]);
+
+    // Cursor on "user.profile" in route('user.profile') — line 4, char 22.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        22,
+    )
+    .await;
+
+    let result =
+        result.expect("route('user.profile') should resolve to ->name('user.profile') in routes");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/routes/web.php"),
+        "Should jump to routes/web.php, got: {}",
+        target_uri
+    );
+    assert_eq!(
+        definition_line(&result),
+        2,
+        "->name('user.profile') is on line 2 (0-indexed) in routes/web.php"
+    );
+}
+
+// ─── __() / trans() / Lang::get() go-to-definition ──────────────────────────
+
+#[tokio::test]
+async fn test_goto_definition_laravel_trans_basic() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $msg = __('messages.welcome');
+    }
+}
+";
+    let messages_php = "\
+<?php
+return [
+    'welcome' => 'Welcome!',
+    'auth' => [
+        'failed' => 'Auth failed.',
+        'password' => 'Wrong password.',
+    ],
+];
+";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("lang/en/messages.php", messages_php),
+    ]);
+
+    // Cursor on "messages.welcome" in __('messages.welcome') — line 4, char 19.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        19,
+    )
+    .await;
+
+    let result = result.expect("__('messages.welcome') should resolve to lang/en/messages.php");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/lang/en/messages.php"),
+        "Should jump to lang/en/messages.php, got: {}",
+        target_uri
+    );
+    assert_eq!(
+        definition_line(&result),
+        2,
+        "'welcome' key is on line 2 (0-indexed) in lang/en/messages.php"
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_laravel_trans_lang_facade() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $msg = \\Lang::get('auth.failed');
+    }
+}
+";
+    let auth_php = "\
+<?php
+return [
+    'failed' => 'Auth failed.',
+    'password' => 'Wrong password.',
+];
+";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("lang/en/auth.php", auth_php),
+    ]);
+
+    // Cursor on "auth.failed" in \Lang::get('auth.failed') — line 4, char 27.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        27,
+    )
+    .await;
+
+    let result = result.expect("Lang::get('auth.failed') should resolve to lang/en/auth.php");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/lang/en/auth.php"),
+        "Should jump to lang/en/auth.php, got: {}",
+        target_uri
+    );
+    assert_eq!(
+        definition_line(&result),
+        2,
+        "'failed' key is on line 2 (0-indexed) in lang/en/auth.php"
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_laravel_trans_nested_key() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $msg = trans('messages.auth.password');
+    }
+}
+";
+    let messages_php = "\
+<?php
+return [
+    'welcome' => 'Welcome!',
+    'auth' => [
+        'failed' => 'Auth failed.',
+        'password' => 'Wrong password.',
+    ],
+];
+";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("lang/en/messages.php", messages_php),
+    ]);
+
+    // Cursor on "messages.auth.password" in trans('messages.auth.password') — line 4, char 22.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        22,
+    )
+    .await;
+
+    let result =
+        result.expect("trans('messages.auth.password') should resolve to lang/en/messages.php");
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/lang/en/messages.php"),
+        "Should jump to lang/en/messages.php, got: {}",
+        target_uri
+    );
+    assert_eq!(
+        definition_line(&result),
+        5,
+        "'password' nested key is on line 5 (0-indexed) in lang/en/messages.php"
+    );
+}
