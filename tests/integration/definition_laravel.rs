@@ -3524,3 +3524,104 @@ return [
         "'password' nested key is on line 5 (0-indexed) in lang/en/messages.php"
     );
 }
+
+#[tokio::test]
+async fn test_goto_definition_laravel_route_group_name_prefix() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $url = route('admin.email.template.create');
+    }
+}
+";
+    // Route is declared with a single group name prefix, not a full explicit name.
+    let routes_web = "\
+<?php
+Route::name('admin.email.template.')->group(function () {
+    Route::get('/create', function () {})->name('create');
+    Route::get('/edit', function () {})->name('edit');
+});
+";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("routes/web.php", routes_web),
+    ]);
+
+    // Cursor on "admin.email.template.create" — line 4, char 22.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        22,
+    )
+    .await;
+
+    let result = result.expect(
+        "route('admin.email.template.create') should resolve via group name prefix",
+    );
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/routes/web.php"),
+        "Should jump to routes/web.php, got: {}",
+        target_uri
+    );
+    // ->name('create') is on line 2 of routes/web.php.
+    assert_eq!(
+        definition_line(&result),
+        2,
+        "->name('create') inside group is on line 2 (0-indexed) in routes/web.php"
+    );
+}
+
+#[tokio::test]
+async fn test_goto_definition_laravel_route_nested_group_prefix() {
+    let service_php = "\
+<?php
+namespace App\\Services;
+class Service {
+    public function demo(): void {
+        $url = route('admin.email.template.create');
+    }
+}
+";
+    // Route is declared with nested groups, each adding a name prefix.
+    let routes_web = "\
+<?php
+Route::name('admin.')->group(function () {
+    Route::name('email.template.')->group(function () {
+        Route::get('/create', function () {})->name('create');
+    });
+});
+";
+
+    let (backend, dir) = make_workspace(&[
+        ("src/Services/Service.php", service_php),
+        ("routes/web.php", routes_web),
+    ]);
+
+    // Cursor on "admin.email.template.create" — line 4, char 22.
+    let result = goto_definition_at(
+        &backend,
+        &dir,
+        "src/Services/Service.php",
+        service_php,
+        4,
+        22,
+    )
+    .await;
+
+    let result = result.expect(
+        "Nested group prefixes should assemble the full route name correctly",
+    );
+    let target_uri = definition_uri(&result);
+    assert!(
+        target_uri.as_str().ends_with("/routes/web.php"),
+        "Should jump to routes/web.php, got: {}",
+        target_uri
+    );
+}
