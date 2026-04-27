@@ -72,10 +72,11 @@ fn scan_stmt<'a>(
 
 /// Walk a call-chain expression while tracking the accumulated group name prefix.
 ///
-/// - `->group(closure)` — extract name prefix from the preceding chain and
-///   recursively scan the closure body with the combined prefix.
-/// - `->name('something')` — check if `prefix + something == target`.
-/// - All other method calls — recurse into the receiver object.
+/// Handles two forms of group calls:
+/// - Fluent chain: `Route::name('prefix.')->middleware(…)->group(fn(){…})`
+///   (outermost node is `Call::Method`)
+/// - Direct static: `Route::group(['as'=>'prefix.', …], fn(){…})`
+///   (outermost node is `Call::StaticMethod`)
 fn scan_expr<'a>(
     expr: &Expression<'a>,
     content: &str,
@@ -83,47 +84,106 @@ fn scan_expr<'a>(
     target: &str,
     uri: &Url,
 ) -> Option<Location> {
-    let Expression::Call(Call::Method(mc)) = expr else {
-        return None;
-    };
-    let ClassLikeMemberSelector::Identifier(ident) = &mc.method else {
-        // Dynamic method name – recurse into receiver.
-        return scan_expr(mc.object, content, prefix, target, uri);
-    };
-    let method = ident.value.to_ascii_lowercase();
+    match expr {
+        // ── Fluent instance-method chain: ->group() / ->name() / other ──────
+        Expression::Call(Call::Method(mc)) => {
+            let ClassLikeMemberSelector::Identifier(ident) = &mc.method else {
+                return scan_expr(mc.object, content, prefix, target, uri);
+            };
+            let method = ident.value.to_ascii_lowercase();
 
-    if method == "group" {
-        // Collect the ->name('prefix.') value(s) from the chain before ->group().
-        let chain_prefix = chain_name_prefix(mc.object, content);
-        let new_prefix = format!("{prefix}{chain_prefix}");
-
-        for arg in mc.argument_list.arguments.iter() {
-            if let Some(loc) = scan_group_body(arg.value(), content, &new_prefix, target, uri) {
-                return Some(loc);
+            if method == "group" {
+                let chain_prefix = chain_name_prefix(mc.object, content);
+                let new_prefix = format!("{prefix}{chain_prefix}");
+                for arg in mc.argument_list.arguments.iter() {
+                    if let Some(loc) =
+                        scan_group_body(arg.value(), content, &new_prefix, target, uri)
+                    {
+                        return Some(loc);
+                    }
+                }
+                return None;
             }
-        }
-        return None;
-    }
 
-    if method == "name" {
-        if let Some(first_arg) = mc.argument_list.arguments.iter().next() {
-            if let Some((name_val, start, _)) = extract_string_literal(first_arg.value(), content)
-            {
-                let full = format!("{prefix}{name_val}");
-                if full == target {
-                    return Some(crate::definition::point_location(
-                        uri.clone(),
-                        offset_to_position(content, start),
-                    ));
+            if method == "name" {
+                if let Some(first_arg) = mc.argument_list.arguments.iter().next() {
+                    if let Some((name_val, start, _)) =
+                        extract_string_literal(first_arg.value(), content)
+                    {
+                        let full = format!("{prefix}{name_val}");
+                        if full == target {
+                            return Some(crate::definition::point_location(
+                                uri.clone(),
+                                offset_to_position(content, start),
+                            ));
+                        }
+                    }
+                }
+                return scan_expr(mc.object, content, prefix, target, uri);
+            }
+
+            scan_expr(mc.object, content, prefix, target, uri)
+        }
+
+        // ── Direct static call: Route::group([options,] fn(){…}) ────────────
+        //
+        // This fires for `Route::group(['as'=>'admin.', …], fn(){…})` where
+        // there is no preceding fluent chain to carry the name prefix.
+        Expression::Call(Call::StaticMethod(sc)) => {
+            let ClassLikeMemberSelector::Identifier(ident) = &sc.method else {
+                return None;
+            };
+            if !ident.value.eq_ignore_ascii_case("group") {
+                return None;
+            }
+            // Extract name prefix from 'as' => '...' in an array argument.
+            let array_prefix = extract_as_prefix_from_args(
+                sc.argument_list.arguments.iter().map(|a| a.value()),
+                content,
+            );
+            let new_prefix = format!("{prefix}{array_prefix}");
+            for arg in sc.argument_list.arguments.iter() {
+                if let Some(loc) =
+                    scan_group_body(arg.value(), content, &new_prefix, target, uri)
+                {
+                    return Some(loc);
+                }
+            }
+            None
+        }
+
+        _ => None,
+    }
+}
+
+/// Extract the `'as' => 'prefix.'` name prefix from a `Route::group([…], fn(){})` argument list.
+///
+/// The array may be in any position; all non-array arguments are skipped.
+fn extract_as_prefix_from_args<'a>(
+    args: impl Iterator<Item = &'a Expression<'a>>,
+    content: &str,
+) -> String {
+    for arg in args {
+        let elements: Vec<&ArrayElement<'_>> = match arg {
+            Expression::Array(arr) => arr.elements.iter().collect(),
+            Expression::LegacyArray(arr) => arr.elements.iter().collect(),
+            _ => continue,
+        };
+        for element in elements {
+            let ArrayElement::KeyValue(kv) = element else {
+                continue;
+            };
+            let Some((key, _, _)) = extract_string_literal(kv.key, content) else {
+                continue;
+            };
+            if key == "as" {
+                if let Some((val, _, _)) = extract_string_literal(kv.value, content) {
+                    return val.to_string();
                 }
             }
         }
-        // ->name() can appear mid-chain (e.g. ->name('x')->middleware(...)); continue.
-        return scan_expr(mc.object, content, prefix, target, uri);
     }
-
-    // Any other method: continue up the receiver chain.
-    scan_expr(mc.object, content, prefix, target, uri)
+    String::new()
 }
 
 /// Walk the argument that was passed to `->group()`.
