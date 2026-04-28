@@ -2650,6 +2650,45 @@ return [
 }
 
 #[tokio::test]
+async fn test_goto_definition_laravel_config_helper_boolean_accessor() {
+    let service_php = "\
+<?php
+class Service {
+    public function demo(): void {
+        $value = config()->boolean('app.debug');
+    }
+}
+";
+    let config_app_php = "\
+<?php
+return [
+    'debug' => true,
+];
+";
+    let (backend, dir) = make_workspace(&[
+        ("src/Service.php", service_php),
+        ("config/app.php", config_app_php),
+    ]);
+
+    let result = goto_definition_at(&backend, &dir, "src/Service.php", service_php, 3, 30).await;
+    assert!(
+        result.is_some(),
+        "config()->boolean('app.debug') should resolve"
+    );
+    let response = result.unwrap();
+    assert!(
+        definition_uri(&response)
+            .as_str()
+            .ends_with("/config/app.php")
+    );
+    assert_eq!(
+        definition_line(&response),
+        2,
+        "config()->boolean → 'debug' key"
+    );
+}
+
+#[tokio::test]
 async fn test_goto_definition_laravel_config_nested() {
     let service_php = "\
 <?php
