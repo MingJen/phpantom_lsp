@@ -133,8 +133,47 @@ pub(crate) fn find_laravel_string_key_references(
         LaravelStringKind::Config => {
             find_all_config_references(backend, key, snapshot, include_declaration)
         }
-        LaravelStringKind::View | LaravelStringKind::Route | LaravelStringKind::Trans => Vec::new(),
+        LaravelStringKind::View | LaravelStringKind::Route | LaravelStringKind::Trans => {
+            find_string_key_usages(kind, key, backend, snapshot)
+        }
     }
+}
+
+/// Scan pre-built [`crate::symbol_map::SymbolMap`] spans for all call sites
+/// matching `kind` + `key` — zero file re-parses, O(total spans) memory walk.
+fn find_string_key_usages(
+    kind: &crate::symbol_map::LaravelStringKind,
+    key: &str,
+    backend: &crate::Backend,
+    snapshot: &[(String, std::sync::Arc<crate::symbol_map::SymbolMap>)],
+) -> Vec<tower_lsp::lsp_types::Location> {
+    use crate::symbol_map::SymbolKind;
+    use crate::util::{offset_to_position, push_unique_location};
+    use tower_lsp::lsp_types::Url;
+
+    let mut locations = Vec::new();
+    for (file_uri, symbol_map) in snapshot {
+        let Ok(parsed_uri) = Url::parse(file_uri) else {
+            continue;
+        };
+        let Some(content) = backend.get_file_content_arc(file_uri) else {
+            continue;
+        };
+        for span in &symbol_map.spans {
+            if let SymbolKind::LaravelStringKey {
+                kind: span_kind,
+                key: span_key,
+            } = &span.kind
+                && span_kind == kind
+                && span_key == key
+            {
+                let start = offset_to_position(&content, span.start as usize);
+                let end = offset_to_position(&content, span.end as usize);
+                push_unique_location(&mut locations, &parsed_uri, start, end);
+            }
+        }
+    }
+    locations
 }
 
 pub use helpers::extends_eloquent_model;
