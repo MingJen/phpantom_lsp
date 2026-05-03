@@ -133,9 +133,7 @@ pub(crate) fn find_laravel_string_key_references(
         LaravelStringKind::Config => {
             find_all_config_references(backend, key, snapshot, include_declaration)
         }
-        LaravelStringKind::View | LaravelStringKind::Route | LaravelStringKind::Trans => {
-            Vec::new()
-        }
+        LaravelStringKind::View | LaravelStringKind::Route | LaravelStringKind::Trans => Vec::new(),
     }
 }
 

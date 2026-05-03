@@ -1935,12 +1935,8 @@ fn extract_from_expression<'a>(
                         );
                     }
                     if (clean_subject.eq_ignore_ascii_case("View")
-                        || clean_subject
-                            .eq_ignore_ascii_case("Illuminate\\Support\\Facades\\View"))
-                        && matches!(
-                            member_name.to_ascii_lowercase().as_str(),
-                            "make" | "exists"
-                        )
+                        || clean_subject.eq_ignore_ascii_case("Illuminate\\Support\\Facades\\View"))
+                        && matches!(member_name.to_ascii_lowercase().as_str(), "make" | "exists")
                     {
                         try_emit_view_name_span(
                             &static_call.argument_list,
@@ -1949,8 +1945,7 @@ fn extract_from_expression<'a>(
                         );
                     }
                     if (clean_subject.eq_ignore_ascii_case("Lang")
-                        || clean_subject
-                            .eq_ignore_ascii_case("Illuminate\\Support\\Facades\\Lang"))
+                        || clean_subject.eq_ignore_ascii_case("Illuminate\\Support\\Facades\\Lang"))
                         && matches!(
                             member_name.to_ascii_lowercase().as_str(),
                             "get" | "has" | "choice"

@@ -3185,11 +3185,17 @@ class Service {
     let result = result.expect("view('welcome') should resolve to welcome.blade.php");
     let target_uri = definition_uri(&result);
     assert!(
-        target_uri.as_str().ends_with("/resources/views/welcome.blade.php"),
+        target_uri
+            .as_str()
+            .ends_with("/resources/views/welcome.blade.php"),
         "Should jump to resources/views/welcome.blade.php, got: {}",
         target_uri
     );
-    assert_eq!(definition_line(&result), 0, "Should point to line 0 of the blade file");
+    assert_eq!(
+        definition_line(&result),
+        0,
+        "Should point to line 0 of the blade file"
+    );
 }
 
 #[tokio::test]
@@ -3561,9 +3567,8 @@ Route::name('admin.email.template.')->group(function () {
     )
     .await;
 
-    let result = result.expect(
-        "route('admin.email.template.create') should resolve via group name prefix",
-    );
+    let result =
+        result.expect("route('admin.email.template.create') should resolve via group name prefix");
     let target_uri = definition_uri(&result);
     assert!(
         target_uri.as_str().ends_with("/routes/web.php"),
@@ -3615,9 +3620,8 @@ Route::name('admin.')->group(function () {
     )
     .await;
 
-    let result = result.expect(
-        "Nested group prefixes should assemble the full route name correctly",
-    );
+    let result =
+        result.expect("Nested group prefixes should assemble the full route name correctly");
     let target_uri = definition_uri(&result);
     assert!(
         target_uri.as_str().ends_with("/routes/web.php"),
@@ -3661,9 +3665,8 @@ Route::group(['middleware' => 'web'], function () {
     )
     .await;
 
-    let result = result.expect(
-        "route('posts.show') inside Route::group([...], fn) should be resolved",
-    );
+    let result =
+        result.expect("route('posts.show') inside Route::group([...], fn) should be resolved");
     let target_uri = definition_uri(&result);
     assert!(
         target_uri.as_str().ends_with("/routes/web.php"),
@@ -3712,8 +3715,8 @@ Route::group(['as' => 'admin.', 'prefix' => 'admin', 'middleware' => 'auth'], fu
     )
     .await;
 
-    let result = result
-        .expect("Route::group(['as'=>'admin.', ...], fn) should resolve 'admin.dashboard'");
+    let result =
+        result.expect("Route::group(['as'=>'admin.', ...], fn) should resolve 'admin.dashboard'");
     let target_uri = definition_uri(&result);
     assert!(
         target_uri.as_str().ends_with("/routes/web.php"),

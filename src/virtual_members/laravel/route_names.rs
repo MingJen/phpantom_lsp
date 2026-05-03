@@ -62,10 +62,9 @@ fn scan_stmt<'a>(
 ) -> Option<Location> {
     match stmt {
         Statement::Expression(e) => scan_expr(e.expression, content, prefix, target, uri),
-        Statement::Return(r) => {
-            r.value
-                .and_then(|v| scan_expr(v, content, prefix, target, uri))
-        }
+        Statement::Return(r) => r
+            .value
+            .and_then(|v| scan_expr(v, content, prefix, target, uri)),
         _ => None,
     }
 }
@@ -143,9 +142,7 @@ fn scan_expr<'a>(
             );
             let new_prefix = format!("{prefix}{array_prefix}");
             for arg in sc.argument_list.arguments.iter() {
-                if let Some(loc) =
-                    scan_group_body(arg.value(), content, &new_prefix, target, uri)
-                {
+                if let Some(loc) = scan_group_body(arg.value(), content, &new_prefix, target, uri) {
                     return Some(loc);
                 }
             }
