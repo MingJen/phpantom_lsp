@@ -129,14 +129,28 @@ pub(crate) fn find_laravel_string_key_references(
     include_declaration: bool,
 ) -> Vec<tower_lsp::lsp_types::Location> {
     use crate::symbol_map::LaravelStringKind;
-    match kind {
+    let mut locations = match kind {
         LaravelStringKind::Config => {
             find_all_config_references(backend, key, snapshot, include_declaration)
         }
         LaravelStringKind::View | LaravelStringKind::Route | LaravelStringKind::Trans => {
             find_string_key_usages(kind, key, backend, snapshot)
         }
+    };
+
+    if include_declaration
+        && kind != &LaravelStringKind::Config
+        && let Some(decl) = resolve_laravel_string_key(backend, kind, key)
+    {
+        crate::util::push_unique_location(
+            &mut locations,
+            &decl.uri,
+            decl.range.start,
+            decl.range.end,
+        );
     }
+
+    locations
 }
 
 /// Scan pre-built [`crate::symbol_map::SymbolMap`] spans for all call sites

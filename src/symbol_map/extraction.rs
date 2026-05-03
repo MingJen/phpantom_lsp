@@ -1781,21 +1781,24 @@ fn extract_from_expression<'a>(
                             },
                         });
                         if name_clean.eq_ignore_ascii_case("config") {
-                            try_emit_config_key_span(
+                            try_emit_laravel_string_span(
+                                crate::symbol_map::LaravelStringKind::Config,
                                 &func_call.argument_list,
                                 ctx.content,
                                 &mut ctx.spans,
                             );
                         }
                         if name_clean.eq_ignore_ascii_case("view") {
-                            try_emit_view_name_span(
+                            try_emit_laravel_string_span(
+                                crate::symbol_map::LaravelStringKind::View,
                                 &func_call.argument_list,
                                 ctx.content,
                                 &mut ctx.spans,
                             );
                         }
                         if name_clean.eq_ignore_ascii_case("route") {
-                            try_emit_route_name_span(
+                            try_emit_laravel_string_span(
+                                crate::symbol_map::LaravelStringKind::Route,
                                 &func_call.argument_list,
                                 ctx.content,
                                 &mut ctx.spans,
@@ -1805,7 +1808,8 @@ fn extract_from_expression<'a>(
                             name_clean.to_ascii_lowercase().as_str(),
                             "__" | "trans" | "trans_choice"
                         ) {
-                            try_emit_trans_key_span(
+                            try_emit_laravel_string_span(
+                                crate::symbol_map::LaravelStringKind::Trans,
                                 &func_call.argument_list,
                                 ctx.content,
                                 &mut ctx.spans,
@@ -1835,7 +1839,8 @@ fn extract_from_expression<'a>(
                 if let ClassLikeMemberSelector::Identifier(ident) = &method_call.method {
                     let member_name = ident.value.to_string();
                     if is_laravel_config_repository_call(method_call.object, &member_name) {
-                        try_emit_config_key_span(
+                        try_emit_laravel_string_span(
+                            crate::symbol_map::LaravelStringKind::Config,
                             &method_call.argument_list,
                             ctx.content,
                             &mut ctx.spans,
@@ -1869,7 +1874,8 @@ fn extract_from_expression<'a>(
                 if let ClassLikeMemberSelector::Identifier(ident) = &method_call.method {
                     let member_name = ident.value.to_string();
                     if is_laravel_config_repository_call(method_call.object, &member_name) {
-                        try_emit_config_key_span(
+                        try_emit_laravel_string_span(
+                            crate::symbol_map::LaravelStringKind::Config,
                             &method_call.argument_list,
                             ctx.content,
                             &mut ctx.spans,
@@ -1928,7 +1934,8 @@ fn extract_from_expression<'a>(
                             .eq_ignore_ascii_case("Illuminate\\Support\\Facades\\Config"))
                         && is_config_repository_method(&member_name)
                     {
-                        try_emit_config_key_span(
+                        try_emit_laravel_string_span(
+                            crate::symbol_map::LaravelStringKind::Config,
                             &static_call.argument_list,
                             ctx.content,
                             &mut ctx.spans,
@@ -1938,7 +1945,8 @@ fn extract_from_expression<'a>(
                         || clean_subject.eq_ignore_ascii_case("Illuminate\\Support\\Facades\\View"))
                         && matches!(member_name.to_ascii_lowercase().as_str(), "make" | "exists")
                     {
-                        try_emit_view_name_span(
+                        try_emit_laravel_string_span(
+                            crate::symbol_map::LaravelStringKind::View,
                             &static_call.argument_list,
                             ctx.content,
                             &mut ctx.spans,
@@ -1951,7 +1959,8 @@ fn extract_from_expression<'a>(
                             "get" | "has" | "choice"
                         )
                     {
-                        try_emit_trans_key_span(
+                        try_emit_laravel_string_span(
+                            crate::symbol_map::LaravelStringKind::Trans,
                             &static_call.argument_list,
                             ctx.content,
                             &mut ctx.spans,
@@ -3187,7 +3196,8 @@ fn is_assert_instanceof(expr: &Expression<'_>) -> bool {
 /// `Config::get()` / `Config::set()` static-call extractor so that
 /// find-references and go-to-definition for Laravel config keys can use
 /// the pre-built symbol map instead of re-parsing every file on demand.
-fn try_emit_config_key_span(
+fn try_emit_laravel_string_span(
+    kind: crate::symbol_map::LaravelStringKind,
     argument_list: &ArgumentList<'_>,
     content: &str,
     spans: &mut Vec<SymbolSpan>,
@@ -3204,15 +3214,20 @@ fn try_emit_config_key_span(
         return;
     }
     let key = &content[inner_start as usize..inner_end as usize];
-    if key.is_empty() || !key.contains('.') {
+    if key.is_empty() {
+        return;
+    }
+
+    if kind == crate::symbol_map::LaravelStringKind::Config && !key.contains('.') {
         // Require at least one dot: bare keys like 'app' are not valid config paths.
         return;
     }
+
     spans.push(SymbolSpan {
         start: inner_start,
         end: inner_end,
         kind: SymbolKind::LaravelStringKey {
-            kind: crate::symbol_map::LaravelStringKind::Config,
+            kind,
             key: key.to_string(),
         },
     });
@@ -3253,96 +3268,6 @@ fn is_laravel_config_repository_call(object: &Expression<'_>, member_name: &str)
         },
         _ => false,
     }
-}
-
-fn try_emit_view_name_span(
-    argument_list: &ArgumentList<'_>,
-    content: &str,
-    spans: &mut Vec<SymbolSpan>,
-) {
-    let Some(first_arg) = argument_list.arguments.iter().next() else {
-        return;
-    };
-    let Expression::Literal(literal::Literal::String(s)) = first_arg.value() else {
-        return;
-    };
-    let inner_start = s.span.start.offset + 1;
-    let inner_end = s.span.end.offset - 1;
-    if inner_start >= inner_end || inner_end as usize > content.len() {
-        return;
-    }
-    let name = &content[inner_start as usize..inner_end as usize];
-    if name.is_empty() {
-        return;
-    }
-    spans.push(SymbolSpan {
-        start: inner_start,
-        end: inner_end,
-        kind: SymbolKind::LaravelStringKey {
-            kind: crate::symbol_map::LaravelStringKind::View,
-            key: name.to_string(),
-        },
-    });
-}
-
-fn try_emit_route_name_span(
-    argument_list: &ArgumentList<'_>,
-    content: &str,
-    spans: &mut Vec<SymbolSpan>,
-) {
-    let Some(first_arg) = argument_list.arguments.iter().next() else {
-        return;
-    };
-    let Expression::Literal(literal::Literal::String(s)) = first_arg.value() else {
-        return;
-    };
-    let inner_start = s.span.start.offset + 1;
-    let inner_end = s.span.end.offset - 1;
-    if inner_start >= inner_end || inner_end as usize > content.len() {
-        return;
-    }
-    let name = &content[inner_start as usize..inner_end as usize];
-    if name.is_empty() {
-        return;
-    }
-    spans.push(SymbolSpan {
-        start: inner_start,
-        end: inner_end,
-        kind: SymbolKind::LaravelStringKey {
-            kind: crate::symbol_map::LaravelStringKind::Route,
-            key: name.to_string(),
-        },
-    });
-}
-
-fn try_emit_trans_key_span(
-    argument_list: &ArgumentList<'_>,
-    content: &str,
-    spans: &mut Vec<SymbolSpan>,
-) {
-    let Some(first_arg) = argument_list.arguments.iter().next() else {
-        return;
-    };
-    let Expression::Literal(literal::Literal::String(s)) = first_arg.value() else {
-        return;
-    };
-    let inner_start = s.span.start.offset + 1;
-    let inner_end = s.span.end.offset - 1;
-    if inner_start >= inner_end || inner_end as usize > content.len() {
-        return;
-    }
-    let name = &content[inner_start as usize..inner_end as usize];
-    if name.is_empty() {
-        return;
-    }
-    spans.push(SymbolSpan {
-        start: inner_start,
-        end: inner_end,
-        kind: SymbolKind::LaravelStringKey {
-            kind: crate::symbol_map::LaravelStringKind::Trans,
-            key: name.to_string(),
-        },
-    });
 }
 
 /// Recursively check whether an expression contains an `instanceof` operator.
