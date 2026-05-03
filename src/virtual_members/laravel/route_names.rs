@@ -28,7 +28,7 @@ pub(crate) fn resolve_route_definition(backend: &Backend, name: &str) -> Option<
         let Some(uri) = Url::from_file_path(&path).ok() else {
             continue;
         };
-        let Some(content) = backend.get_file_content(&uri.to_string()) else {
+        let Some(content) = backend.get_file_content(uri.as_ref()) else {
             continue;
         };
         if let Some(loc) = scan_route_file(&content, name, &uri) {
@@ -105,17 +105,16 @@ fn scan_expr<'a>(
             }
 
             if method == "name" {
-                if let Some(first_arg) = mc.argument_list.arguments.iter().next() {
-                    if let Some((name_val, start, _)) =
+                if let Some(first_arg) = mc.argument_list.arguments.iter().next()
+                    && let Some((name_val, start, _)) =
                         extract_string_literal(first_arg.value(), content)
-                    {
-                        let full = format!("{prefix}{name_val}");
-                        if full == target {
-                            return Some(crate::definition::point_location(
-                                uri.clone(),
-                                offset_to_position(content, start),
-                            ));
-                        }
+                {
+                    let full = format!("{prefix}{name_val}");
+                    if full == target {
+                        return Some(crate::definition::point_location(
+                            uri.clone(),
+                            offset_to_position(content, start),
+                        ));
                     }
                 }
                 return scan_expr(mc.object, content, prefix, target, uri);
@@ -173,10 +172,10 @@ fn extract_as_prefix_from_args<'a>(
             let Some((key, _, _)) = extract_string_literal(kv.key, content) else {
                 continue;
             };
-            if key == "as" {
-                if let Some((val, _, _)) = extract_string_literal(kv.value, content) {
-                    return val.to_string();
-                }
+            if key == "as"
+                && let Some((val, _, _)) = extract_string_literal(kv.value, content)
+            {
+                return val.to_string();
             }
         }
     }

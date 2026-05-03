@@ -66,7 +66,7 @@ fn find_in_lang_base(
         }
         let uri = Url::from_file_path(&php_path).ok()?;
         let content = backend
-            .get_file_content(&uri.to_string())
+            .get_file_content(uri.as_ref())
             .or_else(|| std::fs::read_to_string(&php_path).ok())?;
 
         let declarations = collect_trans_declarations(&content, file_stem);
