@@ -434,7 +434,38 @@ fn is_stale_phpstan_diagnostic(diag: &Diagnostic, content: &str) -> bool {
         );
     }
 
+    // ── Larastan relation-not-found — relation string changed ───────
+    // Larastan reports relationship errors on the outer query line
+    // (e.g. `Order::query()`), not on the individual quoted relation.
+    // During typing it can leave a cached diagnostic for an intermediate
+    // string fragment. If the relation mentioned by PHPStan is no longer
+    // present as a quoted string in the current buffer, prune it until the
+    // next PHPStan run produces a fresh result.
+    if let Some(relation) = extract_larastan_missing_relation(&diag.message) {
+        return !quoted_string_exactly_present(content, &relation);
+    }
+
     false
+}
+
+fn extract_larastan_missing_relation(message: &str) -> Option<String> {
+    let start_marker = "Relation '";
+    let start = message.find(start_marker)? + start_marker.len();
+    let rest = &message[start..];
+    let end = rest.find("' is not found")?;
+    let relation = &rest[..end];
+    if relation.is_empty() {
+        return None;
+    }
+    Some(relation.to_string())
+}
+
+fn quoted_string_exactly_present(content: &str, needle: &str) -> bool {
+    content
+        .split(['\'', '"'])
+        .skip(1)
+        .step_by(2)
+        .any(|quoted| quoted == needle)
 }
 
 // The following helpers were used by the per-identifier stale detection
@@ -2545,6 +2576,61 @@ mod tests {
             !is_stale_phpstan_diagnostic(&other_diag, content),
             "method.notFound should NOT be stale (not listed)"
         );
+    }
+
+    #[test]
+    fn stale_larastan_relation_not_found_when_relation_string_is_absent() {
+        let content = concat!(
+            "<?php\n",
+            "$order = Order::query()\n",
+            "    ->with([\n",
+            "        'receipt',\n",
+            "        'order_items_without_combo_head.item',\n",
+            "    ])\n",
+            "    ->findOrFail($orderId);\n",
+        );
+        let diag = make_phpstan_diag(
+            1,
+            "larastan.relationNotFound",
+            "Relation 'order_item_with' is not found in App\\Models\\Order model.",
+        );
+
+        assert!(
+            is_stale_phpstan_diagnostic(&diag, content),
+            "cached Larastan relation diagnostic should be stale when the reported relation is not in the current quoted strings"
+        );
+    }
+
+    #[test]
+    fn keeps_larastan_relation_not_found_when_relation_string_is_present() {
+        let content = concat!(
+            "<?php\n",
+            "$order = Order::query()\n",
+            "    ->with([\n",
+            "        'order_item_with',\n",
+            "    ])\n",
+            "    ->findOrFail($orderId);\n",
+        );
+        let diag = make_phpstan_diag(
+            1,
+            "larastan.relationNotFound",
+            "Relation 'order_item_with' is not found in App\\Models\\Order model.",
+        );
+
+        assert!(
+            !is_stale_phpstan_diagnostic(&diag, content),
+            "current Larastan relation diagnostic should stay when the reported relation still appears in the buffer"
+        );
+    }
+
+    #[test]
+    fn larastan_relation_presence_requires_exact_quoted_string() {
+        let content = "<?php\nOrder::query()->with(['order_items_without_combo_head.item']);\n";
+        assert!(!quoted_string_exactly_present(content, "order_item_with"));
+        assert!(quoted_string_exactly_present(
+            content,
+            "order_items_without_combo_head.item"
+        ));
     }
 
     #[test]

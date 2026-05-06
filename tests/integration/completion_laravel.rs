@@ -12556,6 +12556,108 @@ class Brand extends Model {
 }
 
 #[tokio::test]
+async fn test_where_has_relationship_completion_inserts_string_relation() {
+    let order_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class Order extends Model {}
+";
+    let brand_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+class Brand extends Model {
+    /** @return HasMany<Order, $this> */
+    public function orders(): HasMany { return $this->hasMany(Order::class); }
+    public function test() {
+        Brand::whereHas('ord');
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[
+        ("src/Models/Order.php", order_php),
+        ("src/Models/Brand.php", brand_php),
+    ]);
+
+    let items = complete_at(&backend, &dir, "src/Models/Brand.php", brand_php, 8, 28).await;
+    let orders = items
+        .iter()
+        .find(|i| i.filter_text.as_deref().unwrap_or(&i.label) == "orders")
+        .expect("orders relationship should complete inside whereHas string");
+
+    assert_eq!(orders.kind, Some(CompletionItemKind::REFERENCE));
+    assert_eq!(orders.insert_text.as_deref(), Some("orders"));
+    assert_ne!(orders.insert_text_format, Some(InsertTextFormat::SNIPPET));
+    assert!(
+        orders
+            .detail
+            .as_deref()
+            .is_some_and(|d| d.starts_with("Laravel relation:")),
+        "relation completion should be distinguishable from functions/methods, got: {:?}",
+        orders.detail
+    );
+}
+
+#[tokio::test]
+async fn test_where_has_relationship_completion_excludes_eloquent_factory_helpers() {
+    let model_php = "\
+<?php
+namespace Illuminate\\Database\\Eloquent;
+abstract class Model {
+    public function hasOne(string $related): \\Illuminate\\Database\\Eloquent\\Relations\\HasOne {}
+    public function newHasOne(): \\Illuminate\\Database\\Eloquent\\Relations\\HasOne {}
+    public function morphOne(string $related, string $name): \\Illuminate\\Database\\Eloquent\\Relations\\MorphOne {}
+}
+";
+    let order_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+class Order extends Model {}
+";
+    let brand_php = "\
+<?php
+namespace App\\Models;
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+class Brand extends Model {
+    /** @return HasMany<Order, $this> */
+    public function orders(): HasMany { return $this->hasMany(Order::class); }
+    public function test() {
+        Brand::whereHas('');
+    }
+}
+";
+    let (backend, dir) = make_workspace(&[
+        ("vendor/illuminate/Eloquent/Model.php", model_php),
+        ("src/Models/Order.php", order_php),
+        ("src/Models/Brand.php", brand_php),
+    ]);
+
+    let items = complete_at(&backend, &dir, "src/Models/Brand.php", brand_php, 8, 25).await;
+    let relation_names: Vec<&str> = items
+        .iter()
+        .filter(|i| i.kind == Some(CompletionItemKind::REFERENCE))
+        .map(|i| i.filter_text.as_deref().unwrap_or(&i.label))
+        .collect();
+
+    assert!(
+        relation_names.contains(&"orders"),
+        "user-defined relation should appear, got: {:?}",
+        relation_names
+    );
+    assert!(
+        !relation_names.contains(&"hasOne")
+            && !relation_names.contains(&"newHasOne")
+            && !relation_names.contains(&"morphOne"),
+        "Eloquent relation factory helpers should not appear as relation strings, got: {:?}",
+        relation_names
+    );
+}
+
+#[tokio::test]
 async fn test_where_has_dot_notation_resolves_chain() {
     // ArticleCategoryTranslation::whereHas('category.articles', fn($q) => $q->)
     //   => $q should be Builder<Article>

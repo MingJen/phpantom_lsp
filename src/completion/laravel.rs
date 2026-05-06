@@ -1,7 +1,7 @@
 use crate::Backend;
 use crate::completion::resolver::ResolutionCtx;
 use crate::php_type::PhpType;
-use crate::types::{ClassInfo, FileContext, ResolvedType};
+use crate::types::{ClassInfo, FileContext, ResolvedType, Visibility};
 use crate::util::{find_class_at_offset, position_to_offset};
 use crate::virtual_members::laravel::{
     ELOQUENT_BUILDER_FQN, RELATIONSHIP_STRING_METHODS, classify_relationship_typed,
@@ -254,6 +254,10 @@ fn build_relationship_completions(
 
     for method in &resolved_model.methods {
         let method_name = method.name.to_string();
+        if !is_string_usable_relationship_method(method) {
+            continue;
+        }
+
         if !method_name
             .to_lowercase()
             .starts_with(&partial.to_lowercase())
@@ -267,8 +271,9 @@ fn build_relationship_completions(
         {
             items.push(CompletionItem {
                 label: method_name.clone(),
-                kind: Some(CompletionItemKind::METHOD),
-                detail: Some(format!("Relationship: {}", rt)),
+                kind: Some(CompletionItemKind::REFERENCE),
+                detail: Some(format!("Laravel relation: {}", rt)),
+                insert_text: Some(method_name.clone()),
                 filter_text: Some(method_name),
                 ..CompletionItem::default()
             });
@@ -276,4 +281,38 @@ fn build_relationship_completions(
     }
 
     items
+}
+
+fn is_string_usable_relationship_method(method: &crate::types::MethodInfo) -> bool {
+    method.visibility == Visibility::Public
+        && !method.parameters.iter().any(|p| p.is_required)
+        && !is_eloquent_relationship_factory_method(&method.name)
+}
+
+fn is_eloquent_relationship_factory_method(name: &str) -> bool {
+    matches!(
+        name,
+        "hasOne"
+            | "hasMany"
+            | "belongsTo"
+            | "belongsToMany"
+            | "morphOne"
+            | "morphMany"
+            | "morphTo"
+            | "morphToMany"
+            | "morphedByMany"
+            | "hasManyThrough"
+            | "hasOneThrough"
+            | "newHasOne"
+            | "newHasMany"
+            | "newBelongsTo"
+            | "newBelongsToMany"
+            | "newMorphOne"
+            | "newMorphMany"
+            | "newMorphTo"
+            | "newMorphToMany"
+            | "newMorphedByMany"
+            | "newHasManyThrough"
+            | "newHasOneThrough"
+    )
 }
