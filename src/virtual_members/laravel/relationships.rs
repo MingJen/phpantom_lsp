@@ -36,6 +36,32 @@ pub(crate) const RELATION_QUERY_METHODS: &[&str] = &[
     "whereRelation",
 ];
 
+/// Laravel methods that accept relationship names as string arguments.
+pub(crate) const RELATIONSHIP_STRING_METHODS: &[&str] = &[
+    "with",
+    "without",
+    "load",
+    "loadMissing",
+    "loadCount",
+    "loadMorph",
+    "has",
+    "orHas",
+    "doesntHave",
+    "orDoesntHave",
+    "whereHas",
+    "orWhereHas",
+    "withWhereHas",
+    "whereDoesntHave",
+    "orWhereDoesntHave",
+    "whereRelation",
+    "withCount",
+    "withSum",
+    "withAvg",
+    "withMin",
+    "withMax",
+    "withExists",
+];
+
 /// Fully-qualified relationship class names used by
 /// [`infer_relationship_from_body`].
 const RELATIONSHIP_METHOD_FQN_MAP: &[(&str, &str)] = &[

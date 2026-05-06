@@ -489,3 +489,100 @@ class Comment extends Model {
         labels2
     );
 }
+
+#[tokio::test]
+async fn test_completion_relationship_string_after_builder_receiver() {
+    let (backend, dir) = create_psr4_workspace(
+        r#"{ "autoload": { "psr-4": { "App\\": "src/", "Illuminate\\": "vendor/illuminate/" } } }"#,
+        &[
+            (
+                "vendor/illuminate/Model.php",
+                "<?php namespace Illuminate\\Database\\Eloquent; abstract class Model {
+                /** @return Builder<static> */
+                public static function query() {}
+                public function hasMany($c) {}
+            }",
+            ),
+            (
+                "vendor/illuminate/Builder.php",
+                "<?php namespace Illuminate\\Database\\Eloquent;
+                /** @template TModel */
+                class Builder {
+                    /** @return $this */
+                    public function with($r) { return $this; }
+                }",
+            ),
+            (
+                "vendor/illuminate/Relations/HasMany.php",
+                "<?php namespace Illuminate\\Database\\Eloquent\\Relations; class HasMany {}",
+            ),
+            (
+                "src/Models/Post.php",
+                r#"<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+class Post extends Model {
+    /** @return \Illuminate\Database\Eloquent\Relations\HasMany<Comment, $this> */
+    public function comments() { return $this->hasMany(Comment::class); }
+}
+"#,
+            ),
+            (
+                "src/Models/Comment.php",
+                "<?php namespace App\\Models; class Comment extends \\Illuminate\\Database\\Eloquent\\Model {}",
+            ),
+        ],
+    );
+
+    for path in [
+        "vendor/illuminate/Builder.php",
+        "vendor/illuminate/Model.php",
+        "src/Models/Post.php",
+    ] {
+        let uri = Url::from_file_path(dir.path().join(path)).unwrap();
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri,
+                    language_id: "php".to_string(),
+                    version: 1,
+                    text: std::fs::read_to_string(dir.path().join(path)).unwrap(),
+                },
+            })
+            .await;
+    }
+
+    let uri = Url::from_file_path(dir.path().join("test.php")).unwrap();
+    let content = "<?php\nuse App\\Models\\Post;\nPost::query()->with('c');";
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "php".to_string(),
+                version: 1,
+                text: content.to_string(),
+            },
+        })
+        .await;
+
+    let req = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier::new(uri),
+            position: Position::new(2, 22),
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+        context: None,
+    };
+    let items = backend.completion(req).await.unwrap().unwrap();
+    let labels: Vec<_> = match items {
+        CompletionResponse::Array(arr) => arr.into_iter().map(|i| i.label).collect(),
+        _ => panic!("Expected array"),
+    };
+
+    assert!(
+        labels.contains(&"comments".to_string()),
+        "Builder<Post>::with() should suggest Post relationships. Labels: {:?}",
+        labels
+    );
+}

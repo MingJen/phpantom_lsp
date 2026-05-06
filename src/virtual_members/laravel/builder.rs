@@ -116,6 +116,11 @@ pub(super) fn build_builder_forwarded_methods(
         class_loader,
         cache,
     );
+    let effective_methods = builder_methods_with_unsubstituted_parent_templates(
+        &builder_class,
+        &resolved_builder,
+        class_loader,
+    );
 
     // Build a substitution map: TModel → concrete model class name,
     // and static/$this/self → Builder<ConcreteModel>.
@@ -124,13 +129,17 @@ pub(super) fn build_builder_forwarded_methods(
         vec![PhpType::Named(class.name.to_string())],
     );
     let mut subs = super::self_ref_subs(builder_self_type.clone());
-    for param in &builder_class.template_params {
-        subs.insert(param.to_string(), PhpType::Named(class.name.to_string()));
-    }
+    insert_builder_template_substitutions(
+        &mut subs,
+        &builder_class,
+        class,
+        builder_fqn,
+        class_loader,
+    );
 
     let mut methods = Vec::new();
 
-    for method in &resolved_builder.methods {
+    for method in &effective_methods {
         if method.visibility != Visibility::Public {
             continue;
         }
@@ -190,6 +199,68 @@ pub(super) fn build_builder_forwarded_methods(
     }
 
     methods
+}
+
+fn builder_methods_with_unsubstituted_parent_templates(
+    builder_class: &ClassInfo,
+    resolved_builder: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
+) -> Vec<Arc<MethodInfo>> {
+    let mut methods: Vec<Arc<MethodInfo>> = resolved_builder.methods.iter().cloned().collect();
+    if builder_class.fqn() == ELOQUENT_BUILDER_FQN || builder_class.name == ELOQUENT_BUILDER_FQN {
+        return methods;
+    }
+
+    let Some(base_builder) = class_loader(ELOQUENT_BUILDER_FQN) else {
+        return methods;
+    };
+    let resolved_base =
+        crate::virtual_members::resolve_class_fully_maybe_cached(&base_builder, class_loader, None);
+
+    for parent_method in &resolved_base.methods {
+        if builder_class
+            .methods
+            .iter()
+            .any(|m| m.name.eq_ignore_ascii_case(&parent_method.name))
+        {
+            continue;
+        }
+
+        if let Some(existing) = methods
+            .iter_mut()
+            .find(|m| m.name.eq_ignore_ascii_case(&parent_method.name))
+        {
+            *existing = Arc::clone(parent_method);
+        } else {
+            methods.push(Arc::clone(parent_method));
+        }
+    }
+
+    methods
+}
+
+fn insert_builder_template_substitutions(
+    subs: &mut std::collections::HashMap<String, PhpType>,
+    builder_class: &ClassInfo,
+    model_class: &ClassInfo,
+    builder_fqn: &str,
+    class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
+) {
+    let model_type = PhpType::Named(model_class.name.to_string());
+    for param in &builder_class.template_params {
+        subs.insert(param.to_string(), model_type.clone());
+    }
+
+    if builder_fqn != ELOQUENT_BUILDER_FQN
+        && let Some(base_builder) = class_loader(ELOQUENT_BUILDER_FQN)
+    {
+        for param in &base_builder.template_params {
+            subs.entry(param.to_string())
+                .or_insert_with(|| model_type.clone());
+        }
+    }
+
+    subs.entry("TModel".to_string()).or_insert(model_type);
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

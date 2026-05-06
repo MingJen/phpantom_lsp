@@ -172,6 +172,39 @@ fn builder_forwarding_maps_tmodel_to_concrete_class() {
 }
 
 #[test]
+fn custom_builder_forwarding_maps_parent_tmodel_to_concrete_class() {
+    let builder = make_builder(vec![make_method("first", Some("TModel|null"))]);
+    let mut custom_builder = make_class("App\\Models\\UserBuilder");
+    custom_builder.parent_class = Some(atom(ELOQUENT_BUILDER_FQN));
+    let mut user = make_class("App\\Models\\User");
+    user.laravel = Some(Box::new(crate::types::LaravelMetadata {
+        custom_builder: Some(PhpType::Named("App\\Models\\UserBuilder".to_string())),
+        ..Default::default()
+    }));
+
+    let loader = |name: &str| -> Option<Arc<ClassInfo>> {
+        if name == "App\\Models\\UserBuilder" {
+            Some(Arc::new(custom_builder.clone()))
+        } else if name == ELOQUENT_BUILDER_FQN {
+            Some(Arc::new(builder.clone()))
+        } else {
+            None
+        }
+    };
+
+    let result = build_builder_forwarded_methods(&user, &loader, None);
+    let first = result
+        .iter()
+        .find(|m| m.name == "first")
+        .expect("first() should be inherited from the parent Builder");
+    assert_eq!(
+        first.return_type_str().as_deref(),
+        Some("App\\Models\\User|null"),
+        "Inherited parent Builder<TModel> methods should substitute TModel"
+    );
+}
+
+#[test]
 fn builder_forwarding_maps_generic_collection_return() {
     let builder = make_builder(vec![make_method(
         "get",

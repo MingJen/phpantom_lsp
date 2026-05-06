@@ -151,6 +151,30 @@ fn class_declaration_produces_class_declaration() {
 }
 
 #[test]
+fn laravel_relationship_spans_cover_supported_methods() {
+    let php = "<?php\nPost::withWhereHas('comments');\n$post?->withExists('comments');\n$post->withSum(['comments' => 'votes']);\n";
+    let map = parse_and_extract(php);
+
+    let hits: Vec<_> = map
+        .spans
+        .iter()
+        .filter_map(|span| match &span.kind {
+            SymbolKind::LaravelStringKey {
+                kind: LaravelStringKind::Relationship,
+                key,
+            } => Some(key.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        hits,
+        vec!["comments", "comments", "comments"],
+        "all relationship-string methods should emit navigable spans"
+    );
+}
+
+#[test]
 fn extends_produces_class_reference() {
     let php = "<?php\nclass Foo extends Bar {}\n";
     let map = parse_and_extract(php);

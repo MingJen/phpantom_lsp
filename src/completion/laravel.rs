@@ -4,37 +4,11 @@ use crate::php_type::PhpType;
 use crate::types::{ClassInfo, FileContext, ResolvedType};
 use crate::util::{find_class_at_offset, position_to_offset};
 use crate::virtual_members::laravel::{
-    ELOQUENT_BUILDER_FQN, classify_relationship_typed, extends_eloquent_model,
-    resolve_relation_chain,
+    ELOQUENT_BUILDER_FQN, RELATIONSHIP_STRING_METHODS, classify_relationship_typed,
+    extends_eloquent_builder, extends_eloquent_model, resolve_relation_chain,
 };
 use std::sync::Arc;
 use tower_lsp::lsp_types::*;
-
-/// Laravel methods that accept relationship names as string arguments.
-const RELATIONSHIP_STRING_METHODS: &[&str] = &[
-    "with",
-    "without",
-    "load",
-    "loadMissing",
-    "loadCount",
-    "loadMorph",
-    "has",
-    "orHas",
-    "doesntHave",
-    "orDoesntHave",
-    "whereHas",
-    "orWhereHas",
-    "withWhereHas",
-    "whereDoesntHave",
-    "orWhereDoesntHave",
-    "whereRelation",
-    "withCount",
-    "withSum",
-    "withAvg",
-    "withMin",
-    "withMax",
-    "withExists",
-];
 
 pub(crate) fn try_laravel_completion(
     backend: &Backend,
@@ -164,9 +138,18 @@ fn find_model_from_resolved_types(
                 return Some(Arc::clone(cls));
             }
 
-            // Check for Builder<Model>
+            if let Some(model_cls) = extract_model_from_builder_type(&rt.type_string, class_loader)
+            {
+                return Some(model_cls);
+            }
+
+            // Check for Builder<Model>. Custom builders are supported by
+            // walking their parent chain to the Eloquent Builder base class.
             let fqn = cls.fqn();
-            if cls.name == "Builder" || fqn == ELOQUENT_BUILDER_FQN {
+            if cls.name == "Builder"
+                || fqn == ELOQUENT_BUILDER_FQN
+                || extends_eloquent_builder(cls, class_loader)
+            {
                 // Try to extract model from Builder's template params or return types.
                 if let Some(model_type) = extract_model_from_builder(cls)
                     && let Some(model_name) = model_type.base_name()
@@ -179,6 +162,31 @@ fn find_model_from_resolved_types(
         }
     }
     None
+}
+
+fn extract_model_from_builder_type(
+    ty: &PhpType,
+    class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
+) -> Option<Arc<ClassInfo>> {
+    let PhpType::Generic(base, args) = ty else {
+        return None;
+    };
+    let model_type = args.first()?;
+    if model_type.is_empty() || model_type.is_named("TModel") {
+        return None;
+    }
+
+    let builder_cls = class_loader(base)?;
+    if builder_cls.fqn() != ELOQUENT_BUILDER_FQN
+        && builder_cls.name != "Builder"
+        && !extends_eloquent_builder(&builder_cls, class_loader)
+    {
+        return None;
+    }
+
+    let model_name = model_type.base_name()?;
+    let model_cls = class_loader(model_name)?;
+    extends_eloquent_model(&model_cls, class_loader).then_some(model_cls)
 }
 
 fn extract_model_from_builder(builder: &ClassInfo) -> Option<PhpType> {

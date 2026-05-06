@@ -1865,20 +1865,7 @@ fn extract_from_expression<'a>(
                             &mut ctx.spans,
                         );
                     }
-                    if matches!(
-                        member_name.to_ascii_lowercase().as_str(),
-                        "with"
-                            | "load"
-                            | "loadmissing"
-                            | "has"
-                            | "wherehas"
-                            | "orwherehas"
-                            | "doesnthave"
-                            | "ordoesnthave"
-                            | "wheredoesnthave"
-                            | "withcount"
-                            | "loadcount"
-                    ) {
+                    if is_laravel_relationship_string_method(&member_name) {
                         try_emit_relationship_spans(
                             &method_call.argument_list,
                             ctx.content,
@@ -1920,20 +1907,7 @@ fn extract_from_expression<'a>(
                             &mut ctx.spans,
                         );
                     }
-                    if matches!(
-                        member_name.to_ascii_lowercase().as_str(),
-                        "with"
-                            | "load"
-                            | "loadmissing"
-                            | "has"
-                            | "wherehas"
-                            | "orwherehas"
-                            | "doesnthave"
-                            | "ordoesnthave"
-                            | "wheredoesnthave"
-                            | "withcount"
-                            | "loadcount"
-                    ) {
+                    if is_laravel_relationship_string_method(&member_name) {
                         try_emit_relationship_spans(
                             &method_call.argument_list,
                             ctx.content,
@@ -2026,20 +2000,7 @@ fn extract_from_expression<'a>(
                         );
                     }
 
-                    if matches!(
-                        member_name.to_ascii_lowercase().as_str(),
-                        "with"
-                            | "load"
-                            | "loadmissing"
-                            | "has"
-                            | "wherehas"
-                            | "orwherehas"
-                            | "doesnthave"
-                            | "ordoesnthave"
-                            | "wheredoesnthave"
-                            | "withcount"
-                            | "loadcount"
-                    ) {
+                    if is_laravel_relationship_string_method(&member_name) {
                         try_emit_relationship_spans(
                             &static_call.argument_list,
                             ctx.content,
@@ -3312,6 +3273,12 @@ fn try_emit_relationship_spans(
             _ => {}
         }
     }
+}
+
+fn is_laravel_relationship_string_method(method_name: &str) -> bool {
+    crate::virtual_members::laravel::RELATIONSHIP_STRING_METHODS
+        .iter()
+        .any(|m| m.eq_ignore_ascii_case(method_name))
 }
 
 fn emit_rel_span_inner(span: mago_span::Span, content: &str, spans: &mut Vec<SymbolSpan>) {

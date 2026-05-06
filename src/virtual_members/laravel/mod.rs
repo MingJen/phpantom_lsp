@@ -196,7 +196,7 @@ fn find_string_key_usages(
 }
 
 pub use helpers::extends_eloquent_model;
-pub(crate) use helpers::{accessor_method_candidates, camel_to_snake};
+pub(crate) use helpers::{accessor_method_candidates, camel_to_snake, extends_eloquent_builder};
 
 pub(crate) use accessors::is_accessor_method;
 use accessors::{
@@ -207,8 +207,8 @@ pub(crate) use where_property::where_property_method_to_column;
 
 pub use relationships::infer_relationship_from_body;
 pub(crate) use relationships::{
-    RELATION_QUERY_METHODS, classify_relationship_typed, count_property_to_relationship_method,
-    resolve_relation_chain,
+    RELATION_QUERY_METHODS, RELATIONSHIP_STRING_METHODS, classify_relationship_typed,
+    count_property_to_relationship_method, resolve_relation_chain,
 };
 use relationships::{
     RelationshipKind, build_property_type, count_property_name, extract_related_type_typed,
