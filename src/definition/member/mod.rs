@@ -803,16 +803,22 @@ impl Backend {
         if !extends_eloquent_model(class, class_loader) {
             return None;
         }
-        let builder = class_loader(ELOQUENT_BUILDER_FQN)?;
+
+        let builder_fqn = class
+            .laravel()
+            .and_then(|l| l.custom_builder.as_ref())
+            .and_then(|t| t.base_name())
+            .unwrap_or(ELOQUENT_BUILDER_FQN);
+
+        let builder = class_loader(builder_fqn)?;
         let (declaring_class, fqn) =
             Self::find_declaring_class(&builder, member_name, class_loader)?;
-        // When the declaring class is the Eloquent Builder itself,
-        // find_declaring_class returns the short name ("Builder").
-        // Replace it with the fully-qualified name so that
-        // find_class_file_content can disambiguate classes that share
-        // the same short name (e.g. Eloquent\Builder vs Demo\Builder).
+
+        // When the declaring class is the builder itself, find_declaring_class
+        // returns the short name ("Builder"). Replace it with the FQN so
+        // that find_class_file_content can disambiguate.
         if !fqn.contains('\\') && fqn == builder.name {
-            Some((declaring_class, ELOQUENT_BUILDER_FQN.to_string()))
+            Some((declaring_class, builder_fqn.to_string()))
         } else {
             Some((declaring_class, fqn))
         }

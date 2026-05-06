@@ -1865,6 +1865,26 @@ fn extract_from_expression<'a>(
                             &mut ctx.spans,
                         );
                     }
+                    if matches!(
+                        member_name.to_ascii_lowercase().as_str(),
+                        "with"
+                            | "load"
+                            | "loadmissing"
+                            | "has"
+                            | "wherehas"
+                            | "orwherehas"
+                            | "doesnthave"
+                            | "ordoesnthave"
+                            | "wheredoesnthave"
+                            | "withcount"
+                            | "loadcount"
+                    ) {
+                        try_emit_relationship_spans(
+                            &method_call.argument_list,
+                            ctx.content,
+                            &mut ctx.spans,
+                        );
+                    }
                     // Emit call site for method call: `$subject->method(...)`
                     emit_call_site(
                         format!("{}->{}", &subject_text, &member_name),
@@ -1895,6 +1915,26 @@ fn extract_from_expression<'a>(
                     if is_laravel_config_repository_call(method_call.object, &member_name) {
                         try_emit_laravel_string_span(
                             crate::symbol_map::LaravelStringKind::Config,
+                            &method_call.argument_list,
+                            ctx.content,
+                            &mut ctx.spans,
+                        );
+                    }
+                    if matches!(
+                        member_name.to_ascii_lowercase().as_str(),
+                        "with"
+                            | "load"
+                            | "loadmissing"
+                            | "has"
+                            | "wherehas"
+                            | "orwherehas"
+                            | "doesnthave"
+                            | "ordoesnthave"
+                            | "wheredoesnthave"
+                            | "withcount"
+                            | "loadcount"
+                    ) {
+                        try_emit_relationship_spans(
                             &method_call.argument_list,
                             ctx.content,
                             &mut ctx.spans,
@@ -1980,6 +2020,27 @@ fn extract_from_expression<'a>(
                     {
                         try_emit_laravel_string_span(
                             crate::symbol_map::LaravelStringKind::Trans,
+                            &static_call.argument_list,
+                            ctx.content,
+                            &mut ctx.spans,
+                        );
+                    }
+
+                    if matches!(
+                        member_name.to_ascii_lowercase().as_str(),
+                        "with"
+                            | "load"
+                            | "loadmissing"
+                            | "has"
+                            | "wherehas"
+                            | "orwherehas"
+                            | "doesnthave"
+                            | "ordoesnthave"
+                            | "wheredoesnthave"
+                            | "withcount"
+                            | "loadcount"
+                    ) {
+                        try_emit_relationship_spans(
                             &static_call.argument_list,
                             ctx.content,
                             &mut ctx.spans,
@@ -3197,14 +3258,81 @@ fn is_assert_instanceof(expr: &Expression<'_>) -> bool {
             return false;
         }
         if let Some(first_arg) = func_call.argument_list.arguments.iter().next() {
-            let arg_expr = match first_arg {
-                Argument::Positional(pos) => pos.value,
-                Argument::Named(named) => named.value,
-            };
+            let arg_expr = first_arg.value();
             return arg_contains_instanceof(arg_expr);
         }
     }
     false
+}
+
+fn try_emit_relationship_spans(
+    argument_list: &ArgumentList<'_>,
+    content: &str,
+    spans: &mut Vec<SymbolSpan>,
+) {
+    for arg in argument_list.arguments.iter() {
+        match arg.value() {
+            Expression::Literal(literal::Literal::String(s)) => {
+                emit_rel_span_inner(s.span, content, spans);
+            }
+            Expression::Array(arr) => {
+                for el in arr.elements.iter() {
+                    match el {
+                        ArrayElement::Value(v) => {
+                            if let Expression::Literal(literal::Literal::String(s)) = v.value {
+                                emit_rel_span_inner(s.span, content, spans);
+                            }
+                        }
+                        ArrayElement::KeyValue(kv) => {
+                            if let Expression::Literal(literal::Literal::String(s)) = kv.key {
+                                emit_rel_span_inner(s.span, content, spans);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Expression::LegacyArray(arr) => {
+                for el in arr.elements.iter() {
+                    match el {
+                        ArrayElement::Value(v) => {
+                            if let Expression::Literal(literal::Literal::String(s)) = v.value {
+                                emit_rel_span_inner(s.span, content, spans);
+                            }
+                        }
+                        ArrayElement::KeyValue(kv) => {
+                            if let Expression::Literal(literal::Literal::String(s)) = kv.key {
+                                emit_rel_span_inner(s.span, content, spans);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn emit_rel_span_inner(span: mago_span::Span, content: &str, spans: &mut Vec<SymbolSpan>) {
+    let inner_start = span.start.offset + 1;
+    let inner_end = span.end.offset - 1;
+    if inner_start >= inner_end || inner_end as usize > content.len() {
+        return;
+    }
+    let key = &content[inner_start as usize..inner_end as usize];
+    if key.is_empty() {
+        return;
+    }
+
+    spans.push(SymbolSpan {
+        start: inner_start,
+        end: inner_end,
+        kind: SymbolKind::LaravelStringKey {
+            kind: crate::symbol_map::LaravelStringKind::Relationship,
+            key: key.to_string(),
+        },
+    });
 }
 
 /// If the first argument of `argument_list` is a non-empty, non-interpolated

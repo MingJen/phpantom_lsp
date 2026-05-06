@@ -370,6 +370,12 @@ impl Backend {
             }
 
             if matches!(string_ctx, StringContext::InStringLiteral) {
+                if let Some(response) = crate::completion::laravel::try_laravel_completion(
+                    self, &uri, &content, position, &ctx,
+                ) {
+                    return Ok(Some(response));
+                }
+
                 return Ok(None);
             }
 

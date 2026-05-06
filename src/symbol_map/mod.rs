@@ -223,6 +223,8 @@ pub(crate) enum LaravelStringKind {
     Route,
     /// A `__('key')`, `trans('key')`, or `Lang::get('key')` call.
     Trans,
+    /// A relationship name in `with()`, `load()`, `has()`, etc.
+    Relationship,
 }
 
 // ─── Template parameter definition site structures ──────────────────────────

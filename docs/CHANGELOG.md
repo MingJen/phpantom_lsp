@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`global` keyword variable resolution.** Variables imported with `global $var` now resolve to their top-level type, enabling completion, hover, and go-to-definition.
 - **`array_reduce`, `array_sum`, and `array_product` return type inference.** `array_reduce()` resolves to the type of its initial value argument. `array_sum()` and `array_product()` resolve to `int|float`.
 - **Machine-readable CLI output.** Both `analyze` and `fix` accept a `--format` flag with `table`, `github`, and `json` options. When `GITHUB_ACTIONS` is set, table output automatically includes GitHub annotations.
+- **Laravel custom Eloquent Builder support.** Automatically detects custom builders via `#[UseEloquentBuilder]`, `@use HasBuilder`, or `newEloquentBuilder()` return type. Model queries and static calls now resolve to the custom builder, providing full completion and navigation for builder-specific methods. (thanks [@MingJen](https://github.com/MingJen))
+- **Laravel relationship navigation and completion.** Go-to-definition and autocomplete for relationship name strings in `with()`, `whereHas()`, `has()`, `load()`, etc. Supports dot-notation chains (e.g., `with('posts.comments')`) with cross-model type resolution. (thanks [@MingJen](https://github.com/MingJen))
 
 ### Changed
 

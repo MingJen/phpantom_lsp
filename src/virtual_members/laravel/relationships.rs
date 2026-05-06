@@ -112,8 +112,8 @@ const MORPH_TO: &str = "MorphTo";
 const ELOQUENT_RELATIONS_NS: &str = "Illuminate\\Database\\Eloquent\\Relations\\";
 
 /// The category of a relationship return type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RelationshipKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum RelationshipKind {
     /// HasOne, MorphOne, BelongsTo — singular nullable model.
     Singular,
     /// HasMany, MorphMany, BelongsToMany, HasManyThrough, MorphToMany — Collection.
@@ -138,7 +138,7 @@ pub(super) enum RelationshipKind {
 /// Unqualified names (no `\`) are matched by short name only, which
 /// is the common case for body-inferred types and docblock annotations
 /// that use `use` imports.
-pub(super) fn classify_relationship_typed(return_type: &PhpType) -> Option<RelationshipKind> {
+pub(crate) fn classify_relationship_typed(return_type: &PhpType) -> Option<RelationshipKind> {
     let base = return_type.base_name()?;
     let sname = short_name(base);
 
@@ -438,6 +438,67 @@ fn resolve_related_fqn(
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
+
+use tower_lsp::lsp_types::{Location, Url};
+
+use crate::Backend;
+
+/// Resolve a relationship name (e.g. `'posts'`, `'author'`) to its method
+/// declaration(s) on Eloquent models.
+///
+/// Since we don't always know the specific model instance at the call site
+/// (due to the way symbol maps are pre-built), this performs a global search
+/// across all models for public methods matching the name that return an
+/// Eloquent relationship type.
+pub(crate) fn resolve_relationship_definitions(backend: &Backend, name: &str) -> Vec<Location> {
+    // If it's a dot-notation chain, take the first segment.
+    let first_segment = name.split('.').next().unwrap_or(name);
+    let mut results = Vec::new();
+
+    // 1. Gather all candidate classes from the ast_map while holding the lock.
+    //    We only take classes that actually declare a method with the target name.
+    let candidates: Vec<(String, Arc<ClassInfo>)> = {
+        let ast_map = backend.ast_map.read();
+        let mut list = Vec::new();
+        for (file_uri, classes) in ast_map.iter() {
+            for class in classes {
+                if class.methods.iter().any(|m| m.name == first_segment) {
+                    list.push((file_uri.clone(), Arc::clone(class)));
+                }
+            }
+        }
+        list
+    };
+
+    // 2. Process candidates outside the lock.
+    for (file_uri, class) in candidates {
+        let Ok(uri) = Url::parse(&file_uri) else {
+            continue;
+        };
+
+        // Only search in Eloquent models.
+        // This call is now safe as we don't hold the ast_map lock.
+        if !super::extends_eloquent_model(&class, &|n| backend.find_or_load_class(n)) {
+            continue;
+        }
+
+        if let Some(method) = class.methods.iter().find(|m| m.name == first_segment) {
+            // Verify it returns a relationship.
+            if let Some(ref rt) = method.return_type
+                && classify_relationship_typed(rt).is_some()
+            {
+                let content = backend.get_file_content(&file_uri).unwrap_or_default();
+                let pos = crate::util::offset_to_position(&content, method.name_offset as usize);
+                results.push(Location::new(
+                    uri,
+                    tower_lsp::lsp_types::Range::new(pos, pos),
+                ));
+            }
+        }
+    }
+
+    results
+}
 
 #[cfg(test)]
 #[path = "relationships_tests.rs"]

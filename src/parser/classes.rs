@@ -292,6 +292,78 @@ fn extract_collected_by_attribute(
     None
 }
 
+/// Extract the custom builder class name from a `#[UseEloquentBuilder(X::class)]` attribute.
+fn extract_use_eloquent_builder_attribute(
+    attribute_lists: &Sequence<'_, AttributeList<'_>>,
+    content: &str,
+) -> Option<String> {
+    for attr_list in attribute_lists.iter() {
+        for attr in attr_list.attributes.iter() {
+            let short = attr.name.last_segment();
+            if short != "UseEloquentBuilder" {
+                continue;
+            }
+            let arg_list = attr.argument_list.as_ref()?;
+            let first_arg = arg_list.arguments.first()?;
+            let span = first_arg.span();
+            let start = span.start.offset as usize;
+            let end = span.end.offset as usize;
+            let text = content.get(start..end)?;
+            let class_name = text.trim_end_matches("::class").trim();
+            if !class_name.is_empty() {
+                return Some(class_name.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Determine the custom builder class for an Eloquent model.
+///
+/// Checks three sources in priority order:
+///
+/// 1. `#[UseEloquentBuilder(CustomBuilder::class)]` attribute on the class.
+/// 2. `/** @use HasBuilder<CustomBuilder> */` in `use_generics`.
+/// 3. A `newEloquentBuilder()` method override whose return type names the
+///    custom builder class.
+fn extract_custom_builder(
+    attribute_lists: &Sequence<'_, AttributeList<'_>>,
+    use_generics: &[(Atom, Vec<PhpType>)],
+    methods: &[MethodInfo],
+    content: &str,
+    current_namespace: &Option<String>,
+) -> Option<PhpType> {
+    // 1. Try the #[UseEloquentBuilder] attribute first.
+    if let Some(name) = extract_use_eloquent_builder_attribute(attribute_lists, content) {
+        let fqn = if !name.contains('\\')
+            && let Some(ns) = current_namespace
+        {
+            format!("{}\\{}", ns, name)
+        } else {
+            name
+        };
+        return Some(PhpType::Named(fqn));
+    }
+
+    // 2. Fall back to @use HasBuilder<X>.
+    for (trait_name, args) in use_generics {
+        let short = trait_name.rsplit('\\').next().unwrap_or(trait_name);
+        if (short == "HasBuilder" || short == "CustomizeQueryBuilder") && !args.is_empty() {
+            return Some(args[0].clone());
+        }
+    }
+
+    // 3. Fall back to newEloquentBuilder() return type override.
+    let method = methods.iter().find(|m| m.name == "newEloquentBuilder")?;
+    let return_type = method.return_type.as_ref()?;
+    let base = return_type.base_name()?;
+    if base == "Illuminate\\Database\\Eloquent\\Builder" || base == "Builder" || base.is_empty() {
+        return None;
+    }
+
+    Some(return_type.clone())
+}
+
 /// Determine the custom collection class for an Eloquent model.
 ///
 /// Checks three sources in priority order:
@@ -881,6 +953,15 @@ impl Backend {
                         content,
                     );
 
+                    let current_namespace = doc_ctx.and_then(|c| c.namespace.as_ref());
+                    let custom_builder = extract_custom_builder(
+                        &class.attribute_lists,
+                        &use_generics,
+                        &methods,
+                        content,
+                        &current_namespace.cloned(),
+                    );
+
                     let casts_definitions =
                         extract_casts_definitions(class.members.iter(), content);
 
@@ -946,6 +1027,7 @@ impl Backend {
                             timestamps,
                             created_at_name,
                             updated_at_name,
+                            custom_builder,
                         })),
                     });
 

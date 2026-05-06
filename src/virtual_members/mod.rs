@@ -398,9 +398,12 @@ pub fn merge_virtual_members(class: &mut ClassInfo, virtual_members: VirtualMemb
     for method in virtual_members.methods {
         let key = (method.name.to_string(), method.is_static);
         if let Some(&idx) = method_index.get(&key) {
-            if class.methods[idx].has_scope_attribute {
-                // Replace the #[Scope]-attributed original with the
-                // synthesized virtual scope method.
+            if class.methods[idx].has_scope_attribute
+                || matches!(method.name.as_str(), "query" | "newQuery" | "newModelQuery")
+            {
+                // Replace the original with the synthesized virtual method.
+                // For scope attributes, the original is an implementation detail.
+                // For query methods, we want to return the custom builder.
                 class.methods.make_mut()[idx] = Arc::new(method);
             }
             // Otherwise: real declared member — keep the original.
@@ -814,6 +817,12 @@ fn resolve_class_fully_inner(
     // providers run, so that `collect_mixin_members` picks them up.
     if fqn.as_str() == "Illuminate\\Redis\\Connections\\Connection" {
         let mixin = atom("Redis");
+        if !merged.mixins.contains(&mixin) {
+            merged.mixins.push(mixin);
+        }
+    }
+    if fqn.as_str() == "Illuminate\\Database\\Eloquent\\Builder" {
+        let mixin = atom("Illuminate\\Database\\Query\\Builder");
         if !merged.mixins.contains(&mixin) {
             merged.mixins.push(mixin);
         }

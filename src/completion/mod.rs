@@ -73,6 +73,7 @@ pub mod array_shape;
 pub(crate) mod builder;
 pub(crate) mod call_resolution;
 pub(crate) mod handler;
+pub(crate) mod laravel;
 pub mod named_args;
 pub(crate) mod resolve;
 pub(crate) mod resolver;

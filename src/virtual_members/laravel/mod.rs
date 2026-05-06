@@ -116,6 +116,9 @@ pub(crate) fn resolve_laravel_string_key(
         LaravelStringKind::View => view_names::resolve_view_definitions(backend, key),
         LaravelStringKind::Route => route_names::resolve_route_definitions(backend, key),
         LaravelStringKind::Trans => trans_keys::resolve_trans_definitions(backend, key),
+        LaravelStringKind::Relationship => {
+            relationships::resolve_relationship_definitions(backend, key)
+        }
     }
 }
 
@@ -135,9 +138,10 @@ pub(crate) fn find_laravel_string_key_references(
         LaravelStringKind::Config => {
             find_all_config_references(backend, key, snapshot, include_declaration)
         }
-        LaravelStringKind::View | LaravelStringKind::Route | LaravelStringKind::Trans => {
-            find_string_key_usages(kind, key, backend, snapshot)
-        }
+        LaravelStringKind::View
+        | LaravelStringKind::Route
+        | LaravelStringKind::Trans
+        | LaravelStringKind::Relationship => find_string_key_usages(kind, key, backend, snapshot),
     };
 
     if include_declaration && kind != &LaravelStringKind::Config {
@@ -201,12 +205,13 @@ use accessors::{
 };
 pub(crate) use where_property::where_property_method_to_column;
 
-pub(crate) use relationships::count_property_to_relationship_method;
 pub use relationships::infer_relationship_from_body;
-pub(crate) use relationships::{RELATION_QUERY_METHODS, resolve_relation_chain};
+pub(crate) use relationships::{
+    RELATION_QUERY_METHODS, classify_relationship_typed, count_property_to_relationship_method,
+    resolve_relation_chain,
+};
 use relationships::{
-    RelationshipKind, build_property_type, classify_relationship_typed, count_property_name,
-    extract_related_type_typed,
+    RelationshipKind, build_property_type, count_property_name, extract_related_type_typed,
 };
 
 pub use scopes::build_scope_methods_for_builder;
@@ -331,7 +336,7 @@ pub(crate) fn try_inject_builder_scopes(
     generic_args: &[PhpType],
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
 ) {
-    if !is_eloquent_builder_fqn(base_fqn, raw_cls) || generic_args.is_empty() {
+    if !is_eloquent_builder_fqn(base_fqn, raw_cls, class_loader) || generic_args.is_empty() {
         return;
     }
 
@@ -627,10 +632,17 @@ fn inject_model_virtual_methods(
 /// 2. The `ClassInfo.name` field (short name or FQN depending on source).
 /// 3. The FQN constructed from `file_namespace + name` (PSR-4 loaded classes
 ///    where `name` is the short name only).
-fn is_eloquent_builder_fqn(base_fqn: &str, cls: &ClassInfo) -> bool {
+///
+/// Also checks whether the class extends the base Eloquent Builder.
+fn is_eloquent_builder_fqn(
+    base_fqn: &str,
+    cls: &ClassInfo,
+    class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
+) -> bool {
     base_fqn == ELOQUENT_BUILDER_FQN
         || cls.name == ELOQUENT_BUILDER_FQN
         || cls.fqn() == ELOQUENT_BUILDER_FQN
+        || helpers::extends_eloquent_builder(cls, class_loader)
 }
 
 /// Find a class in a slice by name (short or FQN).

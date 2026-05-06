@@ -46,7 +46,7 @@ impl Backend {
     /// from `file_namespace` + `name` when a namespace is available so
     /// that `find_class_file_content` can disambiguate classes that share
     /// the same short name (e.g. `Eloquent\Builder` vs `Query\Builder`).
-    pub(in crate::definition) fn find_declaring_class(
+    pub(crate) fn find_declaring_class(
         class: &ClassInfo,
         member_name: &str,
         class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,

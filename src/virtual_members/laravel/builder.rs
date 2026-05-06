@@ -91,9 +91,19 @@ pub(super) fn build_builder_forwarded_methods(
     class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
     cache: Option<&ResolvedClassCache>,
 ) -> Vec<MethodInfo> {
-    // Load the Eloquent Builder class.
-    let builder_class = match class_loader(ELOQUENT_BUILDER_FQN) {
+    let custom_builder = class.laravel().and_then(|l| l.custom_builder.as_ref());
+    let builder_fqn = custom_builder
+        .and_then(|t| t.base_name())
+        .unwrap_or(ELOQUENT_BUILDER_FQN);
+
+    // Load the Eloquent Builder class (or custom builder).
+    let builder_class = match class_loader(builder_fqn) {
         Some(c) => c,
+        // Fallback to standard builder if custom builder fails to load.
+        None if builder_fqn != ELOQUENT_BUILDER_FQN => match class_loader(ELOQUENT_BUILDER_FQN) {
+            Some(c) => c,
+            None => return Vec::new(),
+        },
         None => return Vec::new(),
     };
 
@@ -101,13 +111,6 @@ pub(super) fn build_builder_forwarded_methods(
     // including @mixin Query\Builder).  This is safe because Builder
     // does not extend Model, so the LaravelModelProvider will not
     // recurse.
-    //
-    // With topological population, the base Builder at cache key
-    // ("Illuminate\\Database\\Eloquent\\Builder", []) is already
-    // fully resolved in the cache when model providers run.  Scope
-    // injection happens at a higher layer (`try_inject_builder_scopes`
-    // in type resolution), not during Builder resolution, so the
-    // cached value is correct to use here.
     let resolved_builder = crate::virtual_members::resolve_class_fully_maybe_cached(
         &builder_class,
         class_loader,
@@ -117,10 +120,10 @@ pub(super) fn build_builder_forwarded_methods(
     // Build a substitution map: TModel → concrete model class name,
     // and static/$this/self → Builder<ConcreteModel>.
     let builder_self_type = PhpType::Generic(
-        ELOQUENT_BUILDER_FQN.to_string(),
+        builder_fqn.to_string(),
         vec![PhpType::Named(class.name.to_string())],
     );
-    let mut subs = super::self_ref_subs(builder_self_type);
+    let mut subs = super::self_ref_subs(builder_self_type.clone());
     for param in &builder_class.template_params {
         subs.insert(param.to_string(), PhpType::Named(class.name.to_string()));
     }
@@ -174,6 +177,16 @@ pub(super) fn build_builder_forwarded_methods(
         }
 
         methods.push(forwarded);
+    }
+
+    // ── query() / newQuery() / newModelQuery() ──────────────────────
+    // When a model has a custom builder, User::query() should return
+    // UserBuilder<User> instead of the default Builder<User>.
+    for name in ["query", "newQuery", "newModelQuery"] {
+        methods.push(MethodInfo {
+            is_static: true,
+            ..MethodInfo::virtual_method_typed(name, Some(&builder_self_type))
+        });
     }
 
     methods
